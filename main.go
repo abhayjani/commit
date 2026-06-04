@@ -27,6 +27,12 @@ func main() {
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
 	waStore.SetOSInfo("Commit", [3]uint32{1, 1, 1})
 
+	log.Println("══════════════════════════════════════════════")
+	log.Println("  Commit (Outscroll fork) — READ-ONLY MODE")
+	log.Println("  Reads & drafts only. NEVER sends a WhatsApp")
+	log.Println("  message. Safe to link your number.")
+	log.Println("══════════════════════════════════════════════")
+
 	dataDir, err := dataDirectory()
 	if err != nil {
 		log.Fatalf("failed to determine data directory: %v", err)
@@ -61,7 +67,13 @@ func main() {
 		go wa.Connect(ctx)
 	}
 
-	hasHostsEntry := ensureHostsEntry()
+	// The /etc/hosts entry (so you can use http://commit:9384) is purely
+	// cosmetic and needs an admin password — off by default to avoid a scary
+	// prompt on first launch. Opt in with COMMIT_SETUP_HOSTS=1.
+	hasHostsEntry := false
+	if os.Getenv("COMMIT_SETUP_HOSTS") == "1" {
+		hasHostsEntry = ensureHostsEntry()
+	}
 
 	addr := fmt.Sprintf("0.0.0.0:%d", defaultPort)
 	ln, err := net.Listen("tcp", addr)
@@ -69,12 +81,13 @@ func main() {
 		log.Fatalf("failed to listen on %s: %v", addr, err)
 	}
 
+	url := fmt.Sprintf("http://localhost:%d", defaultPort)
 	if hasHostsEntry {
-		log.Printf("Commit running at http://commit:%d", defaultPort)
-		openBrowser(fmt.Sprintf("http://commit:%d", defaultPort))
-	} else {
-		log.Printf("Commit running at http://localhost:%d", defaultPort)
-		openBrowser(fmt.Sprintf("http://localhost:%d", defaultPort))
+		url = fmt.Sprintf("http://commit:%d", defaultPort)
+	}
+	log.Printf("Commit running at %s", url)
+	if os.Getenv("COMMIT_HEADLESS") != "1" {
+		openBrowser(url)
 	}
 
 	if err := srv.Serve(ctx, ln); err != nil {

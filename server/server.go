@@ -132,6 +132,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/followups", s.requireAuth(s.handleFollowUps))
 	s.mux.HandleFunc("/api/followups/nudge", s.requireAuth(s.handleNudge))
 	s.mux.HandleFunc("/api/replies", s.requireAuth(s.handleReplies))
+	s.mux.HandleFunc("/api/reply/draft", s.requireAuth(s.handleDraftReply))
 	s.mux.HandleFunc("/api/export", s.requireAuth(s.handleExport))
 	s.mux.HandleFunc("/api/commitments/auto-resolved", s.requireAuth(s.handleAutoResolved))
 	s.mux.HandleFunc("/api/chats/mute", s.requireAuth(s.handleToggleChatMute))
@@ -734,6 +735,10 @@ func (s *Server) handleReply(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", 405)
 		return
 	}
+	if s.wa.IsReadOnly() {
+		http.Error(w, "read-only mode: sending is disabled", 403)
+		return
+	}
 	var body struct {
 		ChatJID string `json:"chat_jid"`
 		Message string `json:"message"`
@@ -838,6 +843,52 @@ func (s *Server) handleReplies(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, queues)
+}
+
+// handleDraftReply generates a reply in the user's own voice for a chat. It
+// ONLY returns draft text — it never sends anything to WhatsApp (read-only safe).
+func (s *Server) handleDraftReply(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+	var body struct {
+		ChatJID string `json:"chat_jid"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ChatJID == "" {
+		http.Error(w, "chat_jid required", 400)
+		return
+	}
+	apiKey := s.db.GetAPIKey()
+	if apiKey == "" {
+		http.Error(w, "no API key — add a Claude key in settings to draft replies", 400)
+		return
+	}
+	thread, err := s.db.GetRecentThread(body.ChatJID, 15)
+	if err != nil || len(thread) == 0 {
+		http.Error(w, "no messages found for this chat", 404)
+		return
+	}
+	samples, _ := s.db.GetMyVoiceSamples(body.ChatJID, 20)
+
+	personName := ""
+	for i := len(thread) - 1; i >= 0; i-- {
+		if !thread[i].IsFromMe {
+			personName = thread[i].SenderName
+			if personName == "" {
+				personName = thread[i].ChatName
+			}
+			break
+		}
+	}
+
+	draft, err := s.callDraftWithFallback(r.Context(), apiKey, personName, thread, samples)
+	if err != nil {
+		log.Printf("draft error: %v", err)
+		http.Error(w, "failed to draft reply", 500)
+		return
+	}
+	writeJSON(w, map[string]any{"draft": draft})
 }
 
 // handleExport bundles commitments + reply queues as one JSON blob — the hook

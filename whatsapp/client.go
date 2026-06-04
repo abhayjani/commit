@@ -39,6 +39,7 @@ type Client struct {
 	connected    bool
 	appCtx       context.Context
 	loopsStarted bool
+	readOnly     bool // when true, the client can NEVER send a WhatsApp message
 
 	pendingMu      sync.Mutex
 	pendingChoices []string // person names awaiting disambiguation
@@ -51,7 +52,15 @@ func New(db *store.DB, dataDir string, extractor Extractor, appCtx context.Conte
 		extractor: extractor,
 		qrChan:    make(chan string, 5),
 		appCtx:    appCtx,
+		readOnly:  true, // Outscroll fork: observe + draft only, never send. Safest for ban risk.
 	}
+}
+
+// IsReadOnly reports whether sending is disabled. True for this fork.
+func (c *Client) IsReadOnly() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.readOnly
 }
 
 func (c *Client) HasSession() bool {
@@ -170,7 +179,9 @@ func (c *Client) Login(ctx context.Context) (<-chan string, error) {
 func (c *Client) handleEvent(rawEvt interface{}) {
 	switch evt := rawEvt.(type) {
 	case *events.Message:
-		if !c.handleBotCommand(context.Background(), evt) {
+		// Read-only: never auto-respond or parse incoming as bot commands —
+		// just record the message for analysis.
+		if c.IsReadOnly() || !c.handleBotCommand(context.Background(), evt) {
 			c.handleMessage(evt)
 		}
 	case *events.HistorySync:
@@ -283,10 +294,23 @@ func (c *Client) getChatName(jid types.JID) string {
 	return info.Name
 }
 
+// ErrReadOnly is returned by all send paths when the client is in read-only
+// mode. Nothing reaches WhatsApp's servers.
+var ErrReadOnly = fmt.Errorf("read-only mode: sending is disabled")
+
 func (c *Client) SendMessage(ctx context.Context, jid types.JID, text string) error {
 	c.mu.RLock()
 	client := c.wa
+	readOnly := c.readOnly
 	c.mu.RUnlock()
+
+	// HARD GATE: in read-only mode the app never transmits anything. This is the
+	// single chokepoint every send path (dashboard reply, reminders, welcome
+	// message, rate-limit notice, bot replies) funnels through.
+	if readOnly {
+		log.Printf("read-only mode: suppressed outbound message to %s", jid.String())
+		return ErrReadOnly
+	}
 
 	if client == nil {
 		return fmt.Errorf("not connected")
@@ -360,9 +384,12 @@ func (c *Client) startLoops(ctx context.Context) {
 		return
 	}
 	c.loopsStarted = true
+	readOnly := c.readOnly
 	c.mu.Unlock()
-	go c.extractor.StartProcessingLoop(ctx)
-	go c.reminderLoop(ctx)
+	go c.extractor.StartProcessingLoop(ctx) // read + analyze only, no sends
+	if !readOnly {
+		go c.reminderLoop(ctx) // reminderLoop delivers via WhatsApp; pointless (and blocked) in read-only
+	}
 }
 
 func (c *Client) getContainer() (*sqlstore.Container, error) {

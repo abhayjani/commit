@@ -120,6 +120,92 @@ func (db *DB) GetReplyQueues() (*ReplyQueues, error) {
 	return &ReplyQueues{NeedsReply: needsReply, AwaitingReply: awaitingReply}, rows.Err()
 }
 
+// GetRecentThread returns the last `limit` messages in a chat, oldest-first,
+// so a draft generator sees the conversation in order.
+func (db *DB) GetRecentThread(chatJID string, limit int) ([]*Message, error) {
+	rows, err := db.conn.Query(`
+		SELECT id, chat_jid, sender_jid, sender_name, chat_name, content, timestamp, is_from_me, is_group
+		FROM messages WHERE chat_jid = ?
+		ORDER BY timestamp DESC LIMIT ?`, chatJID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var msgs []*Message
+	for rows.Next() {
+		m := &Message{}
+		var ts int64
+		var fromMe, group int
+		if err := rows.Scan(&m.ID, &m.ChatJID, &m.SenderJID, &m.SenderName, &m.ChatName,
+			&m.Content, &ts, &fromMe, &group); err != nil {
+			return nil, err
+		}
+		m.Timestamp = time.Unix(ts, 0)
+		m.IsFromMe = fromMe == 1
+		m.IsGroup = group == 1
+		msgs = append(msgs, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// reverse to oldest-first
+	for i, j := 0, len(msgs)-1; i < j; i, j = i+1, j-1 {
+		msgs[i], msgs[j] = msgs[j], msgs[i]
+	}
+	return msgs, nil
+}
+
+// GetMyVoiceSamples returns substantive messages the user themselves sent —
+// preferring the current chat (matched tone), topped up with global samples —
+// to use as few-shot style examples when drafting a reply in their voice.
+func (db *DB) GetMyVoiceSamples(chatJID string, limit int) ([]string, error) {
+	seen := map[string]bool{}
+	samples := []string{}
+
+	collect := func(query string, args ...any) error {
+		rows, err := db.conn.Query(query, args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var c string
+			if err := rows.Scan(&c); err != nil {
+				return err
+			}
+			c = strings.TrimSpace(c)
+			if c == "" || seen[c] {
+				continue
+			}
+			seen[c] = true
+			samples = append(samples, c)
+			if len(samples) >= limit {
+				break
+			}
+		}
+		return rows.Err()
+	}
+
+	// Prefer this contact's history (you write differently to different people).
+	if err := collect(`
+		SELECT content FROM messages
+		WHERE is_from_me = 1 AND chat_jid = ? AND length(content) >= 12
+		ORDER BY timestamp DESC LIMIT ?`, chatJID, limit); err != nil {
+		return nil, err
+	}
+	// Top up with recent sent messages from anywhere.
+	if len(samples) < limit {
+		if err := collect(`
+			SELECT content FROM messages
+			WHERE is_from_me = 1 AND length(content) >= 12
+			ORDER BY timestamp DESC LIMIT ?`, limit*3); err != nil {
+			return nil, err
+		}
+	}
+	return samples, nil
+}
+
 func snippet(s string, n int) string {
 	s = strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(s, "\n", " "), "\r", " "))
 	r := []rune(s)

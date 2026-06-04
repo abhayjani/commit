@@ -1,14 +1,17 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/msfoundry/commit/store"
+	"github.com/msfoundry/commit/whatsapp"
 )
 
 // Exercises the real router + auth + handlers for the new endpoints, without
@@ -23,6 +26,7 @@ func newTestServer(t *testing.T) (*Server, string) {
 		t.Fatalf("set passcode: %v", err)
 	}
 	s := &Server{db: db, port: 9384, startedAt: time.Now()}
+	s.wa = whatsapp.New(db, t.TempDir(), nil, context.Background()) // read-only by default
 	s.mux = http.NewServeMux()
 	s.registerRoutes()
 	token := s.generateSession() // registers a valid session
@@ -82,5 +86,50 @@ func TestRepliesRequiresAuth(t *testing.T) {
 	s.mux.ServeHTTP(rec, req)
 	if rec.Code != 401 {
 		t.Errorf("/api/replies without auth = %d, want 401", rec.Code)
+	}
+}
+
+// Safety: the send endpoint must be hard-blocked in read-only mode.
+func TestReplySendBlockedInReadOnly(t *testing.T) {
+	s, token := newTestServer(t)
+	req := httptest.NewRequest("POST", "/api/commitments/reply",
+		strings.NewReader(`{"chat_jid":"x@s.whatsapp.net","message":"hi"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: "commit_session", Value: token})
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+	if rec.Code != 403 {
+		t.Errorf("reply-send in read-only = %d, want 403 (must never send)", rec.Code)
+	}
+}
+
+// The embedded dashboard HTML actually carries our changes.
+func TestDashboardServesNewUI(t *testing.T) {
+	s, _ := newTestServer(t)
+	req := httptest.NewRequest("GET", "/", nil)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("GET / = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"switchTab('needs_reply'", "Needs reply", "draftReply(", "Read-only"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("dashboard HTML missing %q", want)
+		}
+	}
+}
+
+// The draft endpoint exists and is gated on having an API key (no network here).
+func TestDraftNeedsKey(t *testing.T) {
+	s, token := newTestServer(t)
+	req := httptest.NewRequest("POST", "/api/reply/draft",
+		strings.NewReader(`{"chat_jid":"x@s.whatsapp.net"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: "commit_session", Value: token})
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+	if rec.Code != 400 {
+		t.Errorf("draft without API key = %d, want 400", rec.Code)
 	}
 }

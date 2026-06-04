@@ -25,17 +25,30 @@ The dashboard shows everything grouped by person: what you owe, what they owe, h
 - **Mobile web** — the dashboard is fully responsive. Access it from your phone's browser at the same local address.
 - **Passcode protection** — the web interface is secured with a passcode. Your Claude API key is encrypted with AES-GCM on disk.
 
-## Outscroll fork — reply & follow-up tracking
+## Outscroll fork — read-only, with reply tracking + voice drafts
 
-This fork adds two inbox-zero views on top of the commitment engine, built for running an agency over WhatsApp. They're derived purely from **message direction and timing — no Claude API calls**, so they work the moment WhatsApp is linked, even before you add an API key:
+> **🔒 READ-ONLY: this fork can NEVER send a WhatsApp message.** Every send path
+> (dashboard reply, reminders, welcome message, rate-limit notice, the bot) is
+> hard-gated at a single chokepoint in `whatsapp/client.go` (`SendMessage`
+> returns `ErrReadOnly`), and the auto-reply bot is disabled. The app only
+> *reads* your chats and *drafts* text you copy yourself. This is the lowest ban
+> risk this category allows — it behaves like a passive linked device (WhatsApp
+> Web sitting open), with no automated sending. (Covered by tests:
+> `TestReadOnlyBlocksSend`, `TestReplySendBlockedInReadOnly`.)
 
-- **Needs reply** — chats where the last message is *theirs* and you haven't responded. Your "who am I leaving hanging" queue, longest-waiting first.
-- **Waiting on** — chats where the last message is *yours* and they've gone quiet past a threshold. Your "who do I need to chase" queue.
+Built for running an agency over WhatsApp. Three things on top of the commitment engine:
 
-Both let you reply or nudge inline and mute noisy chats. Groups and muted chats are excluded by default. Commitments (Claude-powered) remain as the general catch-all.
+**Reply tracking** — derived purely from message direction/timing, **no Claude API calls**, so it works the moment WhatsApp links, even with no API key:
+- **Needs reply** — last message is *theirs*, you haven't responded. Your "who am I leaving hanging" queue, longest-waiting first.
+- **Waiting on** — last message is *yours*, they've gone quiet past a threshold. Your chase list.
+
+**Voice drafts** — on any item, **✨ Draft reply** writes a response in *your* voice (few-shot from your own past messages, preferring how you write to that specific person), then you **Copy** it and paste into WhatsApp yourself. Nothing is sent. Needs a Claude key (this is the only LLM cost on top of commitments).
+
+Groups and muted chats are excluded from the reply queues by default. Commitments (Claude-powered) remain the general catch-all; their reply box is copy-only too.
 
 ### New endpoints
 - `GET /api/replies` → `{ needs_reply: [...], awaiting_reply: [...] }`
+- `POST /api/reply/draft` `{chat_jid}` → `{ draft }` (drafts only, never sends)
 - `GET /api/export` → all commitments + reply queues as one JSON blob (the hook for piping into the Outscroll CRM)
 
 ### Tunable thresholds (`settings` table — define per your workflow)
@@ -45,6 +58,11 @@ Both let you reply or nudge inline and mute noisy chats. Groups and muted chats 
 | `awaiting_reply_min_hours` | `12` | silence before "Waiting on" surfaces a chat |
 | `replies_max_stale_days` | `60` | ignore threads with no activity past this |
 | `replies_include_groups` | `0` | set `1` to include group chats |
+
+### Launch flags
+No admin password is requested by default (unlike upstream). Optional env vars:
+- `COMMIT_SETUP_HOSTS=1` — add the cosmetic `commit` → `127.0.0.1` hosts entry (needs admin). Off by default; the app just uses `http://localhost:9384`.
+- `COMMIT_HEADLESS=1` — don't auto-open a browser (for servers / scripts).
 
 ## System requirements
 

@@ -2416,7 +2416,7 @@
                         </div>
                         <div style="font-size:13px;color:var(--ink-secondary,#666);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(preview)}</div>
                         <div style="margin-top:8px;display:flex;gap:8px;">
-                            <button class="reply-send-btn" onclick="showReplyBox(${i},'${escAttr(it.chat_jid)}')">${which === 'needs' ? 'Reply' : 'Nudge'}</button>
+                            <button class="reply-send-btn" onclick="draftReply(${i},'${escAttr(it.chat_jid)}')">✨ Draft reply</button>
                             <button class="reply-dismiss-btn" onclick="muteReplyChat('${escAttr(it.chat_jid)}','${escAttr(name)}')">Mute</button>
                         </div>
                         <div class="reply-area hidden" id="rbox-${i}"></div>
@@ -2425,44 +2425,52 @@
             });
             container.innerHTML = html;
         }
-        function showReplyBox(i, chatJID) {
+        // Generate an AI draft in your voice. NOTHING is sent — you copy it and
+        // paste into WhatsApp yourself.
+        async function draftReply(i, chatJID) {
             const area = document.getElementById('rbox-' + i);
             if (!area) return;
-            if (area.classList.contains('hidden')) {
-                area.classList.remove('hidden');
-                area.innerHTML = `<div class="reply-input-row" style="margin-top:8px;">
-                    <textarea class="reply-input" id="rtext-${i}" placeholder="Type a message..." rows="1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChatReply(${i},'${escAttr(chatJID)}');}"></textarea>
-                    <button class="reply-send-btn" onclick="sendChatReply(${i},'${escAttr(chatJID)}')">Send</button>
-                </div>`;
-                const t = document.getElementById('rtext-' + i);
-                if (t) t.focus();
-            } else {
+            if (area.dataset.open === '1') {
+                area.dataset.open = '0';
                 area.classList.add('hidden');
                 area.innerHTML = '';
+                return;
             }
-        }
-        async function sendChatReply(i, chatJID) {
-            const textarea = document.getElementById('rtext-' + i);
-            if (!textarea) return;
-            const message = textarea.value.trim();
-            if (!message) return;
-            const btn = textarea.nextElementSibling;
-            btn.disabled = true;
-            btn.textContent = 'Sending...';
-            textarea.disabled = true;
+            area.classList.remove('hidden');
+            area.dataset.open = '1';
+            area.innerHTML = `<div style="margin-top:8px;font-size:12px;color:var(--ink-tertiary);">✨ Drafting in your voice…</div>`;
             try {
-                await api('/api/commitments/reply', {
+                const res = await api('/api/reply/draft', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({chat_jid: chatJID, message})
+                    body: JSON.stringify({chat_jid: chatJID})
                 });
-                document.getElementById('rbox-' + i).innerHTML = `<div class="reply-sent" style="margin-top:8px;"><span>Message sent ✓</span></div>`;
-                setTimeout(loadDashboard, 1200);
+                const draft = (res && res.draft) ? res.draft : '';
+                area.innerHTML = `
+                    <div style="margin-top:8px;">
+                        <textarea class="reply-input" id="dtext-${i}" rows="3" style="width:100%;box-sizing:border-box;">${esc(draft)}</textarea>
+                        <div style="display:flex;gap:8px;margin-top:6px;align-items:center;flex-wrap:wrap;">
+                            <button class="reply-send-btn" onclick="copyDraft(${i})">Copy</button>
+                            <button class="reply-dismiss-btn" onclick="draftReply(${i},'${escAttr(chatJID)}')">Close</button>
+                            <span style="font-size:11px;color:var(--ink-tertiary);">edit it, copy, paste into WhatsApp — nothing is sent</span>
+                        </div>
+                    </div>`;
             } catch (e) {
-                btn.disabled = false;
-                btn.textContent = 'Send';
-                textarea.disabled = false;
-                textarea.style.borderColor = 'var(--danger)';
+                area.innerHTML = `<div style="margin-top:8px;font-size:12px;color:var(--danger);">${esc((e && e.message) || 'Draft failed')}</div>`;
+            }
+        }
+        function copyDraft(i) {
+            const t = document.getElementById('dtext-' + i);
+            if (!t) return;
+            t.select();
+            const done = () => {
+                const btn = t.parentElement.querySelector('.reply-send-btn');
+                if (btn) { btn.textContent = 'Copied ✓'; setTimeout(() => { btn.textContent = 'Copy'; }, 1500); }
+            };
+            if (navigator.clipboard) {
+                navigator.clipboard.writeText(t.value).then(done).catch(() => { try { document.execCommand('copy'); done(); } catch (_) {} });
+            } else {
+                try { document.execCommand('copy'); done(); } catch (_) {}
             }
         }
         async function muteReplyChat(chatJID, name) {
@@ -2494,8 +2502,8 @@
             if (area.classList.contains('hidden')) {
                 area.classList.remove('hidden');
                 area.innerHTML = `<div class="reply-input-row">
-                    <textarea class="reply-input" id="reply-text-${escAttr(commitmentId)}" placeholder="Type a reply..." rows="1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendReply('${escAttr(commitmentId)}','${escAttr(chatJID)}');}"></textarea>
-                    <button class="reply-send-btn" onclick="sendReply('${escAttr(commitmentId)}','${escAttr(chatJID)}')">Send</button>
+                    <textarea class="reply-input" id="reply-text-${escAttr(commitmentId)}" placeholder="Type a reply to copy…" rows="1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendReply('${escAttr(commitmentId)}','${escAttr(chatJID)}');}"></textarea>
+                    <button class="reply-send-btn" onclick="sendReply('${escAttr(commitmentId)}','${escAttr(chatJID)}')">Copy</button>
                 </div>`;
                 document.getElementById('reply-text-' + commitmentId).focus();
             } else {
@@ -2504,36 +2512,22 @@
             }
         }
 
+        // Copy-only: this fork never sends. You paste into WhatsApp yourself.
         async function sendReply(commitmentId, chatJID) {
             const textarea = document.getElementById('reply-text-' + commitmentId);
+            if (!textarea) return;
             const message = textarea.value.trim();
             if (!message) return;
-
-            const btn = textarea.nextElementSibling;
-            btn.disabled = true;
-            btn.textContent = 'Sending...';
-            textarea.disabled = true;
-
-            try {
-                await api('/api/commitments/reply', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({chat_jid: chatJID, message})
-                });
-                const area = document.getElementById('reply-' + commitmentId);
-                area.innerHTML = `<div class="reply-sent">
-                    <span>Message sent</span>
-                    <div class="reply-sent-actions">
-                        <button class="reply-done-btn" onclick="updateStatus('${escAttr(commitmentId)}','resolved')">Mark done</button>
-                        <button class="reply-dismiss-btn" onclick="closeReply('${escAttr(commitmentId)}')">Close</button>
-                    </div>
-                </div>`;
-            } catch (e) {
-                btn.disabled = false;
-                btn.textContent = 'Send';
-                textarea.disabled = false;
-                textarea.style.borderColor = 'var(--danger)';
-            }
+            try { await navigator.clipboard.writeText(message); }
+            catch (e) { try { textarea.select(); document.execCommand('copy'); } catch (_) {} }
+            const area = document.getElementById('reply-' + commitmentId);
+            area.innerHTML = `<div class="reply-sent">
+                <span>Copied ✓ — paste into WhatsApp to send</span>
+                <div class="reply-sent-actions">
+                    <button class="reply-done-btn" onclick="updateStatus('${escAttr(commitmentId)}','resolved')">Mark done</button>
+                    <button class="reply-dismiss-btn" onclick="closeReply('${escAttr(commitmentId)}')">Close</button>
+                </div>
+            </div>`;
         }
 
         function closeReply(commitmentId) {
@@ -3172,6 +3166,15 @@
         }
         setInterval(updateClock, 1000);
         updateClock();
+
+        // Read-only assurance badge — this fork can only read & draft, never send.
+        (function () {
+            const b = document.createElement('div');
+            b.textContent = '🔒 Read-only · never sends';
+            b.title = 'This build can only read your chats and draft replies. It cannot send WhatsApp messages.';
+            b.style.cssText = 'position:fixed;bottom:12px;left:12px;z-index:9999;font-size:11px;padding:5px 10px;border-radius:999px;background:var(--accent-soft,#eef);color:var(--ink-secondary,#556);border:1px solid var(--border,rgba(0,0,0,0.1));font-weight:600;opacity:0.85;pointer-events:none;';
+            document.body.appendChild(b);
+        })();
 
         // ── Greeting ──
         let userName = '';
