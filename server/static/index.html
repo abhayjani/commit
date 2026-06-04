@@ -1776,17 +1776,21 @@
             <div class="setup-tagline">Stay on top of things.</div>
             <div class="setup-card">
                 <div class="setup-step-label">Step 2 of 3</div>
-                <div class="setup-step-title">Claude API Key</div>
+                <div class="setup-step-title">AI API Key</div>
                 <div class="setup-step-desc">
-                    Commit uses Claude to understand your conversations and extract commitments. Your key stays local — nothing leaves your machine except API calls.
+                    Commit uses an AI model to read your conversations, find commitments, and draft replies. Pick your provider and paste your key — it stays local, nothing leaves your machine except the API calls.
                 </div>
+                <select class="setup-input" id="setup-provider" onchange="onSetupProviderChange()" style="cursor:pointer;">
+                    <option value="anthropic">Anthropic — Claude</option>
+                    <option value="openai">OpenAI — GPT</option>
+                </select>
                 <input type="password" class="setup-input" id="api-key-input" placeholder="sk-ant-api03-..." />
                 <button class="btn-primary" id="setup-btn">
                     Continue
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
                 </button>
                 <div class="setup-note">
-                    Get your key from <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a>. It's stored locally and never shared.
+                    Get your key from <a id="setup-key-link" href="https://console.anthropic.com" target="_blank">console.anthropic.com</a>. It's stored locally and never shared.
                 </div>
             </div>
         </div>
@@ -1922,20 +1926,23 @@
                 </div>
             </div>
             <div class="settings-group">
-                <div class="settings-group-title">Model</div>
+                <div class="settings-group-title">AI Provider &amp; Model</div>
                 <div class="settings-row">
-                    <span class="settings-row-label">Claude model</span>
-                    <select id="settings-model" onchange="updateModel()" style="font-size: 13px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-sunken); color: var(--ink); font-family: inherit; cursor: pointer;">
-                        <option value="claude-sonnet-4-20250514">Claude Sonnet 4 (latest)</option>
-                        <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet</option>
-                        <option value="claude-3-5-haiku-20241022">Claude 3.5 Haiku (fast/cheap)</option>
+                    <span class="settings-row-label">Provider</span>
+                    <select id="settings-provider" onchange="updateProvider()" style="font-size: 13px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-sunken); color: var(--ink); font-family: inherit; cursor: pointer;">
+                        <option value="anthropic">Anthropic — Claude</option>
+                        <option value="openai">OpenAI — GPT</option>
                     </select>
+                </div>
+                <div class="settings-row">
+                    <span class="settings-row-label">Model</span>
+                    <select id="settings-model" onchange="updateModel()" style="font-size: 13px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-sunken); color: var(--ink); font-family: inherit; cursor: pointer;"></select>
                 </div>
             </div>
             <div class="settings-group">
                 <div class="settings-group-title">API Key</div>
                 <div class="settings-row" style="flex-direction: column; align-items: flex-start; gap: 8px;">
-                    <span class="settings-row-label">Update your Anthropic API key</span>
+                    <span class="settings-row-label" id="settings-api-key-label">Update your Anthropic API key</span>
                     <div style="display: flex; gap: 6px; align-items: center; width: 100%;">
                         <input type="password" id="settings-api-key" placeholder="sk-ant-..." style="font-size: 13px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-sunken); color: var(--ink); font-family: inherit; flex: 1;" />
                         <button class="topbar-btn" id="settings-api-key-btn" onclick="updateApiKey()" style="padding: 5px 10px; white-space: nowrap;">Update</button>
@@ -2180,9 +2187,22 @@
         }
 
         // ── Setup: save API key ──
+        function onSetupProviderChange() {
+            const p = (document.getElementById('setup-provider') || {}).value || 'anthropic';
+            const input = document.getElementById('api-key-input');
+            const link = document.getElementById('setup-key-link');
+            if (p === 'openai') {
+                if (input) input.placeholder = 'sk-...';
+                if (link) { link.href = 'https://platform.openai.com/api-keys'; link.textContent = 'platform.openai.com'; }
+            } else {
+                if (input) input.placeholder = 'sk-ant-api03-...';
+                if (link) { link.href = 'https://console.anthropic.com'; link.textContent = 'console.anthropic.com'; }
+            }
+        }
         document.getElementById('setup-btn').addEventListener('click', async () => {
             const key = document.getElementById('api-key-input').value.trim();
             if (!key) return;
+            const provider = (document.getElementById('setup-provider') || {}).value || 'anthropic';
             const btn = document.getElementById('setup-btn');
             btn.disabled = true;
             btn.textContent = 'Validating...';
@@ -2190,7 +2210,7 @@
                 const check = await api('/api/setup/validate', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({api_key: key})
+                    body: JSON.stringify({api_key: key, provider})
                 });
                 if (!check.valid) {
                     alert(check.error || 'Invalid API key');
@@ -2201,7 +2221,7 @@
                 await api('/api/setup', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({api_key: key})
+                    body: JSON.stringify({api_key: key, provider})
                 });
                 goToScreen('screen-qr');
                 startQRLogin();
@@ -3213,6 +3233,7 @@
             const msg = document.getElementById('api-key-msg');
             const key = input.value.trim();
             if (!key) return;
+            const provider = (document.getElementById('settings-provider') || {}).value || 'anthropic';
             btn.textContent = 'Validating...';
             btn.disabled = true;
             msg.style.display = 'none';
@@ -3220,7 +3241,7 @@
                 const v = await api('/api/setup/validate', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({api_key: key})
+                    body: JSON.stringify({api_key: key, provider})
                 });
                 if (!v.valid) {
                     msg.textContent = 'Invalid key: ' + (v.error || 'check and try again');
@@ -3231,7 +3252,7 @@
                 await api('/api/setup/update-key', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({api_key: key})
+                    body: JSON.stringify({api_key: key, provider})
                 });
                 input.value = '';
                 msg.textContent = 'API key updated';
@@ -3264,15 +3285,65 @@
                 }
             }
             loadDebugInfo();
-            loadModelSetting();
+            loadProviderSetting();
         }
         function closeSettings() { document.getElementById('settings-overlay').classList.remove('active'); }
 
-        async function loadModelSetting() {
+        const MODEL_OPTIONS = {
+            anthropic: [
+                ['claude-sonnet-4-20250514', 'Claude Sonnet 4 (latest)'],
+                ['claude-3-5-sonnet-20241022', 'Claude 3.5 Sonnet'],
+                ['claude-3-5-haiku-20241022', 'Claude 3.5 Haiku (fast/cheap)']
+            ],
+            openai: [
+                ['gpt-4o-mini', 'GPT-4o mini (fast/cheap)'],
+                ['gpt-4o', 'GPT-4o'],
+                ['gpt-4.1-mini', 'GPT-4.1 mini']
+            ]
+        };
+        function renderModelOptions(provider, selected) {
+            const sel = document.getElementById('settings-model');
+            if (!sel) return;
+            const opts = MODEL_OPTIONS[provider] || MODEL_OPTIONS.anthropic;
+            sel.innerHTML = opts.map(o => `<option value="${o[0]}">${o[1]}</option>`).join('');
+            if (selected) {
+                if (!opts.some(o => o[0] === selected)) {
+                    sel.insertAdjacentHTML('afterbegin', `<option value="${esc(selected)}">${esc(selected)}</option>`);
+                }
+                sel.value = selected;
+            }
+        }
+        function applyProviderKeyHints(provider) {
+            const label = document.getElementById('settings-api-key-label');
+            const input = document.getElementById('settings-api-key');
+            if (provider === 'openai') {
+                if (label) label.textContent = 'Update your OpenAI API key';
+                if (input) input.placeholder = 'sk-...';
+            } else {
+                if (label) label.textContent = 'Update your Anthropic API key';
+                if (input) input.placeholder = 'sk-ant-...';
+            }
+        }
+        async function loadProviderSetting() {
             try {
-                const d = await api('/api/model');
-                const sel = document.getElementById('settings-model');
-                if (sel && d.model) sel.value = d.model;
+                const d = await api('/api/provider');
+                const provider = d.provider || 'anthropic';
+                const psel = document.getElementById('settings-provider');
+                if (psel) psel.value = provider;
+                renderModelOptions(provider, d.model);
+                applyProviderKeyHints(provider);
+            } catch {}
+        }
+        async function updateProvider() {
+            const provider = document.getElementById('settings-provider').value;
+            try {
+                const d = await api('/api/provider', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({provider})
+                });
+                renderModelOptions(provider, d.model);
+                applyProviderKeyHints(provider);
             } catch {}
         }
         async function updateModel() {

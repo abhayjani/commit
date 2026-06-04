@@ -89,6 +89,29 @@ func TestRepliesRequiresAuth(t *testing.T) {
 	}
 }
 
+// The provider switch persists and reads back.
+func TestProviderEndpoint(t *testing.T) {
+	s, token := newTestServer(t)
+	req := httptest.NewRequest("POST", "/api/provider", strings.NewReader(`{"provider":"openai"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: "commit_session", Value: token})
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("POST /api/provider = %d, want 200", rec.Code)
+	}
+
+	code, body := get(t, s, token, "/api/provider")
+	if code != 200 {
+		t.Fatalf("GET /api/provider = %d", code)
+	}
+	var p string
+	json.Unmarshal(body["provider"], &p)
+	if p != "openai" {
+		t.Errorf("provider = %q, want openai", p)
+	}
+}
+
 // Safety: the send endpoint must be hard-blocked in read-only mode.
 func TestReplySendBlockedInReadOnly(t *testing.T) {
 	s, token := newTestServer(t)

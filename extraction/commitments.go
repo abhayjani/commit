@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/msfoundry/commit/llm"
 	"github.com/msfoundry/commit/store"
 )
 
@@ -233,14 +234,15 @@ func (e *Extractor) ProcessBatch(ctx context.Context) error {
 
 func (e *Extractor) extractFromChat(ctx context.Context, apiKey string, msgs []*store.Message, openCommitments []*store.Commitment) (*extractionResult, error) {
 	prompt := buildExtractionPrompt(msgs, openCommitments)
+	provider := e.db.GetProvider()
 	model := e.db.GetModel()
-	response, err := callClaude(ctx, apiKey, model, prompt)
+	response, err := llm.Complete(ctx, provider, apiKey, model, prompt, 2048)
 	if err != nil {
-		// Auto-fallback: if model not found, try fallback and save it
-		if _, ok := err.(*ModelNotFoundError); ok && model != store.FallbackModel {
+		// Auto-fallback applies only to Anthropic model naming.
+		if provider == store.ProviderAnthropic && strings.Contains(err.Error(), "model_not_found") && model != store.FallbackModel {
 			log.Printf("model %s not available, falling back to %s", model, store.FallbackModel)
 			e.db.SetModel(store.FallbackModel)
-			response, err = callClaude(ctx, apiKey, store.FallbackModel, prompt)
+			response, err = llm.Complete(ctx, provider, apiKey, store.FallbackModel, prompt, 2048)
 		}
 		if err != nil {
 			return nil, err

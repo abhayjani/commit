@@ -142,6 +142,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/user-name", s.requireAuth(s.handleUserName))
 	s.mux.HandleFunc("/api/setup/validate", s.requireAuth(s.handleValidateKey))
 	s.mux.HandleFunc("/api/model", s.requireAuth(s.handleModel))
+	s.mux.HandleFunc("/api/provider", s.requireAuth(s.handleProvider))
 	s.mux.HandleFunc("/api/setup/update-key", s.requireAuth(s.handleUpdateKey))
 	s.mux.HandleFunc("/api/debug", s.requireAuth(s.handleDebug))
 	s.mux.HandleFunc("/api/logout", s.requireAuth(s.handleLogout))
@@ -314,7 +315,8 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		APIKey string `json:"api_key"`
+		APIKey   string `json:"api_key"`
+		Provider string `json:"provider"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "bad request", 400)
@@ -323,6 +325,9 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	if body.APIKey == "" {
 		http.Error(w, "api_key required", 400)
 		return
+	}
+	if body.Provider != "" {
+		s.db.SetProvider(body.Provider)
 	}
 	if err := s.db.SetAPIKey(body.APIKey); err != nil {
 		http.Error(w, "failed to save key", 500)
@@ -337,7 +342,8 @@ func (s *Server) handleValidateKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		APIKey string `json:"api_key"`
+		APIKey   string `json:"api_key"`
+		Provider string `json:"provider"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "bad request", 400)
@@ -345,6 +351,19 @@ func (s *Server) handleValidateKey(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.APIKey == "" {
 		http.Error(w, "api_key required", 400)
+		return
+	}
+	if body.Provider != "" {
+		s.db.SetProvider(body.Provider)
+	}
+
+	// OpenAI: validate the key against /v1/models (no model detection needed).
+	if s.db.GetProvider() == store.ProviderOpenAI {
+		if !s.validateOpenAIKey(r.Context(), body.APIKey) {
+			writeJSON(w, map[string]any{"valid": false, "error": "invalid OpenAI API key"})
+			return
+		}
+		writeJSON(w, map[string]any{"valid": true, "model": s.db.GetModel()})
 		return
 	}
 
@@ -360,13 +379,48 @@ func (s *Server) handleValidateKey(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"valid": true, "model": detectedModel})
 }
 
+func (s *Server) validateOpenAIKey(ctx context.Context, apiKey string) bool {
+	req, _ := http.NewRequestWithContext(ctx, "GET", "https://api.openai.com/v1/models", nil)
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode != 401 && resp.StatusCode != 403
+}
+
+func (s *Server) handleProvider(w http.ResponseWriter, r *http.Request) {
+	if r.Method == "GET" {
+		writeJSON(w, map[string]string{"provider": s.db.GetProvider(), "model": s.db.GetModel()})
+		return
+	}
+	if r.Method != "POST" {
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+	var body struct {
+		Provider string `json:"provider"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad request", 400)
+		return
+	}
+	if err := s.db.SetProvider(body.Provider); err != nil {
+		http.Error(w, "failed to save provider", 500)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "provider": s.db.GetProvider(), "model": s.db.GetModel()})
+}
+
 func (s *Server) handleUpdateKey(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		http.Error(w, "method not allowed", 405)
 		return
 	}
 	var body struct {
-		APIKey string `json:"api_key"`
+		APIKey   string `json:"api_key"`
+		Provider string `json:"provider"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "bad request", 400)
@@ -375,6 +429,9 @@ func (s *Server) handleUpdateKey(w http.ResponseWriter, r *http.Request) {
 	if body.APIKey == "" {
 		http.Error(w, "api_key required", 400)
 		return
+	}
+	if body.Provider != "" {
+		s.db.SetProvider(body.Provider)
 	}
 	if err := s.db.SetAPIKey(body.APIKey); err != nil {
 		http.Error(w, "failed to save key", 500)

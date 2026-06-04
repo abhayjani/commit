@@ -291,23 +291,62 @@ func (db *DB) decrypt(stored string) (string, error) {
 
 const DefaultModel = "claude-sonnet-4-20250514"
 const FallbackModel = "claude-3-5-sonnet-20241022"
+const DefaultOpenAIModel = "gpt-4o-mini"
 
-func (db *DB) GetModel() string {
-	m := db.GetSetting("claude_model")
-	if m == "" {
-		return DefaultModel
+const (
+	ProviderAnthropic = "anthropic"
+	ProviderOpenAI    = "openai"
+)
+
+// GetProvider returns the active LLM provider ("anthropic" by default).
+func (db *DB) GetProvider() string {
+	if db.GetSetting("llm_provider") == ProviderOpenAI {
+		return ProviderOpenAI
 	}
-	return m
+	return ProviderAnthropic
+}
+
+func (db *DB) SetProvider(p string) error {
+	if p != ProviderOpenAI {
+		p = ProviderAnthropic
+	}
+	return db.SetSetting("llm_provider", p)
+}
+
+// GetModel returns the model for the active provider.
+func (db *DB) GetModel() string {
+	if db.GetProvider() == ProviderOpenAI {
+		if m := db.GetSetting("openai_model"); m != "" {
+			return m
+		}
+		return DefaultOpenAIModel
+	}
+	if m := db.GetSetting("claude_model"); m != "" {
+		return m
+	}
+	return DefaultModel
 }
 
 func (db *DB) SetModel(model string) error {
+	if db.GetProvider() == ProviderOpenAI {
+		return db.SetSetting("openai_model", model)
+	}
 	return db.SetSetting("claude_model", model)
 }
 
 // API Key (encrypted at rest)
 
+// apiKeySetting is the per-provider settings key. Anthropic stays under the
+// legacy "api_key" name for backward compatibility with existing installs.
+func (db *DB) apiKeySetting() string {
+	if db.GetProvider() == ProviderOpenAI {
+		return "openai_api_key"
+	}
+	return "api_key"
+}
+
 func (db *DB) GetAPIKey() string {
-	stored := db.GetSetting("api_key")
+	stored := db.GetSetting(db.apiKeySetting())
 	if stored == "" {
 		return ""
 	}
@@ -323,5 +362,5 @@ func (db *DB) SetAPIKey(key string) error {
 	if err != nil {
 		return err
 	}
-	return db.SetSetting("api_key", encrypted)
+	return db.SetSetting(db.apiKeySetting(), encrypted)
 }
