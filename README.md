@@ -25,6 +25,27 @@ The dashboard shows everything grouped by person: what you owe, what they owe, h
 - **Mobile web** — the dashboard is fully responsive. Access it from your phone's browser at the same local address.
 - **Passcode protection** — the web interface is secured with a passcode. Your Claude API key is encrypted with AES-GCM on disk.
 
+## Outscroll fork — reply & follow-up tracking
+
+This fork adds two inbox-zero views on top of the commitment engine, built for running an agency over WhatsApp. They're derived purely from **message direction and timing — no Claude API calls**, so they work the moment WhatsApp is linked, even before you add an API key:
+
+- **Needs reply** — chats where the last message is *theirs* and you haven't responded. Your "who am I leaving hanging" queue, longest-waiting first.
+- **Waiting on** — chats where the last message is *yours* and they've gone quiet past a threshold. Your "who do I need to chase" queue.
+
+Both let you reply or nudge inline and mute noisy chats. Groups and muted chats are excluded by default. Commitments (Claude-powered) remain as the general catch-all.
+
+### New endpoints
+- `GET /api/replies` → `{ needs_reply: [...], awaiting_reply: [...] }`
+- `GET /api/export` → all commitments + reply queues as one JSON blob (the hook for piping into the Outscroll CRM)
+
+### Tunable thresholds (`settings` table — define per your workflow)
+| Setting | Default | Meaning |
+|---|---|---|
+| `needs_reply_min_minutes` | `0` | hide inbound newer than this many minutes |
+| `awaiting_reply_min_hours` | `12` | silence before "Waiting on" surfaces a chat |
+| `replies_max_stale_days` | `60` | ignore threads with no activity past this |
+| `replies_include_groups` | `0` | set `1` to include group chats |
+
 ## System requirements
 
 - **macOS** 12 Monterey or later (Apple Silicon or Intel)

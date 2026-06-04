@@ -1887,6 +1887,8 @@
 
         <div class="tab-bar">
             <button class="tab active" onclick="switchTab('all', this)">All <span class="tab-count" id="count-all">0</span></button>
+            <button class="tab" onclick="switchTab('needs_reply', this)">Needs reply <span class="tab-count" id="count-needs-reply">0</span></button>
+            <button class="tab" onclick="switchTab('awaiting_reply', this)">Waiting on <span class="tab-count" id="count-awaiting">0</span></button>
             <button class="tab" onclick="switchTab('followups', this)">Follow ups <span class="tab-count" id="count-followups">0</span></button>
             <button class="tab" onclick="switchTab('favorites', this)">Favorites <span class="tab-count" id="count-favorites">0</span></button>
             <button class="tab" onclick="switchTab('you_owe', this)">I owe <span class="tab-count" id="count-you-owe">0</span></button>
@@ -2285,7 +2287,17 @@
                 container.innerHTML = '<div style="text-align:center;padding:60px 0;"><div class="connecting-spinner"></div><div style="font-size:13px;color:var(--ink-tertiary);margin-top:8px;">Loading...</div></div>';
             }
             try {
-                if (currentTab === 'followups') {
+                if (currentTab === 'needs_reply' || currentTab === 'awaiting_reply') {
+                    const [queues, stats] = await Promise.all([
+                        api('/api/replies'),
+                        api('/api/commitments/stats')
+                    ]);
+                    updateStats(stats);
+                    const needs = currentTab === 'needs_reply';
+                    renderReplies(needs ? (queues.needs_reply || []) : (queues.awaiting_reply || []), needs ? 'needs' : 'awaiting');
+                    dashboardLoaded = true;
+                    return;
+                } else if (currentTab === 'followups') {
                     const [followUps, stats] = await Promise.all([
                         api('/api/followups'),
                         api('/api/commitments/stats')
@@ -2322,6 +2334,10 @@
 
         function updateStats(stats) {
             document.getElementById('count-all').textContent = stats.open;
+            const nrEl = document.getElementById('count-needs-reply');
+            if (nrEl) nrEl.textContent = stats.needs_reply ?? 0;
+            const awEl = document.getElementById('count-awaiting');
+            if (awEl) awEl.textContent = stats.awaiting_reply ?? 0;
             document.getElementById('count-you-owe').textContent = stats.you_owe;
             document.getElementById('count-they-owe').textContent = stats.they_owe;
             document.getElementById('count-resolved').textContent = stats.resolved;
@@ -2357,6 +2373,109 @@
                 <div class="empty-state-title">Nothing here</div>
                 <div class="empty-state-desc">No commitments match this filter.</div>
             </div>`;
+        }
+
+        // ── Reply / Waiting-on views (derived from message direction, no LLM) ──
+        let replyView = [];
+        function fmtWait(hours) {
+            if (hours < 1) return Math.max(1, Math.round(hours * 60)) + 'm';
+            if (hours < 24) return Math.round(hours) + 'h';
+            return Math.round(hours / 24) + 'd';
+        }
+        function renderReplies(items, which) {
+            replyView = items || [];
+            const container = document.getElementById('commitments-container');
+            if (!items || items.length === 0) {
+                const msg = which === 'needs'
+                    ? "You're all caught up — nobody is waiting on a reply from you."
+                    : "Nothing's gone quiet — every message you sent has a reply.";
+                container.innerHTML = `<div class="empty-state">
+                    <div class="empty-state-title">Inbox zero ✨</div>
+                    <div class="empty-state-desc">${msg}</div>
+                </div>`;
+                return;
+            }
+            const intro = which === 'needs'
+                ? `${items.length} ${items.length === 1 ? 'person is' : 'people are'} waiting on your reply`
+                : `You're waiting on ${items.length} ${items.length === 1 ? 'reply' : 'replies'}`;
+            let html = `<div style="padding:10px 4px 14px;color:var(--ink-tertiary);font-size:13px;">${esc(intro)}</div>`;
+            items.forEach((it, i) => {
+                const name = it.person_name || it.chat_name || 'Unknown';
+                const waited = fmtWait(it.waiting_hours);
+                const waitLabel = which === 'needs' ? `waiting ${waited}` : `no reply for ${waited}`;
+                const urgent = it.waiting_hours > 48;
+                const preview = (which === 'awaiting' ? 'You: ' : '') + (it.last_text || '');
+                const grp = it.is_group ? ' <span style="font-weight:400;color:var(--ink-tertiary);font-size:11px;">· group</span>' : '';
+                html += `
+                <div style="display:flex;gap:12px;padding:14px 4px;border-bottom:1px solid var(--border,rgba(0,0,0,0.07));">
+                    <div style="flex:0 0 36px;height:36px;border-radius:50%;background:var(--accent-soft,#eef);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;color:var(--ink-secondary,#556);">${esc(getInitials(name))}</div>
+                    <div style="flex:1;min-width:0;">
+                        <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;">
+                            <div style="font-weight:600;font-size:14px;color:var(--ink,#111);">${esc(name)}${grp}</div>
+                            <div style="font-size:11px;white-space:nowrap;color:${urgent ? 'var(--danger,#d33)' : 'var(--ink-tertiary,#999)'};">${esc(waitLabel)}</div>
+                        </div>
+                        <div style="font-size:13px;color:var(--ink-secondary,#666);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(preview)}</div>
+                        <div style="margin-top:8px;display:flex;gap:8px;">
+                            <button class="reply-send-btn" onclick="showReplyBox(${i},'${escAttr(it.chat_jid)}')">${which === 'needs' ? 'Reply' : 'Nudge'}</button>
+                            <button class="reply-dismiss-btn" onclick="muteReplyChat('${escAttr(it.chat_jid)}','${escAttr(name)}')">Mute</button>
+                        </div>
+                        <div class="reply-area hidden" id="rbox-${i}"></div>
+                    </div>
+                </div>`;
+            });
+            container.innerHTML = html;
+        }
+        function showReplyBox(i, chatJID) {
+            const area = document.getElementById('rbox-' + i);
+            if (!area) return;
+            if (area.classList.contains('hidden')) {
+                area.classList.remove('hidden');
+                area.innerHTML = `<div class="reply-input-row" style="margin-top:8px;">
+                    <textarea class="reply-input" id="rtext-${i}" placeholder="Type a message..." rows="1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChatReply(${i},'${escAttr(chatJID)}');}"></textarea>
+                    <button class="reply-send-btn" onclick="sendChatReply(${i},'${escAttr(chatJID)}')">Send</button>
+                </div>`;
+                const t = document.getElementById('rtext-' + i);
+                if (t) t.focus();
+            } else {
+                area.classList.add('hidden');
+                area.innerHTML = '';
+            }
+        }
+        async function sendChatReply(i, chatJID) {
+            const textarea = document.getElementById('rtext-' + i);
+            if (!textarea) return;
+            const message = textarea.value.trim();
+            if (!message) return;
+            const btn = textarea.nextElementSibling;
+            btn.disabled = true;
+            btn.textContent = 'Sending...';
+            textarea.disabled = true;
+            try {
+                await api('/api/commitments/reply', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({chat_jid: chatJID, message})
+                });
+                document.getElementById('rbox-' + i).innerHTML = `<div class="reply-sent" style="margin-top:8px;"><span>Message sent ✓</span></div>`;
+                setTimeout(loadDashboard, 1200);
+            } catch (e) {
+                btn.disabled = false;
+                btn.textContent = 'Send';
+                textarea.disabled = false;
+                textarea.style.borderColor = 'var(--danger)';
+            }
+        }
+        async function muteReplyChat(chatJID, name) {
+            try {
+                await api('/api/chats/mute', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({chat_jid: chatJID, chat_name: name})
+                });
+                loadDashboard();
+            } catch (e) {
+                console.error('mute error:', e);
+            }
         }
 
         function esc(s) {

@@ -131,6 +131,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/favorites/chat", s.requireAuth(s.handleToggleChatFavorite))
 	s.mux.HandleFunc("/api/followups", s.requireAuth(s.handleFollowUps))
 	s.mux.HandleFunc("/api/followups/nudge", s.requireAuth(s.handleNudge))
+	s.mux.HandleFunc("/api/replies", s.requireAuth(s.handleReplies))
+	s.mux.HandleFunc("/api/export", s.requireAuth(s.handleExport))
 	s.mux.HandleFunc("/api/commitments/auto-resolved", s.requireAuth(s.handleAutoResolved))
 	s.mux.HandleFunc("/api/chats/mute", s.requireAuth(s.handleToggleChatMute))
 	s.mux.HandleFunc("/api/chats/muted", s.requireAuth(s.handleMutedChats))
@@ -559,6 +561,11 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	totalMsgs, processedMsgs, _ := s.db.GetMessageStats()
+	needsReply, awaitingReply := 0, 0
+	if rq, err := s.db.GetReplyQueues(); err == nil && rq != nil {
+		needsReply = len(rq.NeedsReply)
+		awaitingReply = len(rq.AwaitingReply)
+	}
 	writeJSON(w, map[string]any{
 		"open":               stats.Open,
 		"you_owe":            stats.YouOwe,
@@ -566,6 +573,8 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		"resolved":           stats.Resolved,
 		"favorites":          stats.Favorites,
 		"follow_ups":         stats.FollowUps,
+		"needs_reply":        needsReply,
+		"awaiting_reply":     awaitingReply,
 		"total_messages":     totalMsgs,
 		"processed_messages": processedMsgs,
 	})
@@ -817,6 +826,38 @@ func (s *Server) handleFollowUps(w http.ResponseWriter, r *http.Request) {
 		followUps = []*store.Commitment{}
 	}
 	writeJSON(w, followUps)
+}
+
+// handleReplies returns the needs-reply / awaiting-reply queues derived purely
+// from message direction and timing (no LLM, no API key required).
+func (s *Server) handleReplies(w http.ResponseWriter, r *http.Request) {
+	queues, err := s.db.GetReplyQueues()
+	if err != nil {
+		log.Printf("reply queues error: %v", err)
+		http.Error(w, "failed to get replies", 500)
+		return
+	}
+	writeJSON(w, queues)
+}
+
+// handleExport bundles commitments + reply queues as one JSON blob — the hook
+// for piping into the Outscroll CRM (the "team/CRM later" path).
+func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
+	open, _ := s.db.GetCommitments("open")
+	resolved, _ := s.db.GetCommitments("resolved")
+	replies, _ := s.db.GetReplyQueues()
+	if open == nil {
+		open = []*store.Commitment{}
+	}
+	if resolved == nil {
+		resolved = []*store.Commitment{}
+	}
+	w.Header().Set("Content-Disposition", "attachment; filename=commit-export.json")
+	writeJSON(w, map[string]any{
+		"exported_at": time.Now().Format(time.RFC3339),
+		"commitments": map[string]any{"open": open, "resolved": resolved},
+		"replies":     replies,
+	})
 }
 
 func (s *Server) handleNudge(w http.ResponseWriter, r *http.Request) {
