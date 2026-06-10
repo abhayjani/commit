@@ -50,6 +50,9 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Nightly local backup — ~/.commit is the only copy of months of history.
+	go db.BackupLoop(ctx, filepath.Join(dataDir, "backups"))
+
 	extractor := extraction.New(db, nil)
 	wa := whatsapp.New(db, dataDir, extractor, ctx)
 	extractor.SetNotifier(wa)
@@ -75,7 +78,14 @@ func main() {
 		hasHostsEntry = ensureHostsEntry()
 	}
 
-	addr := fmt.Sprintf("0.0.0.0:%d", defaultPort)
+	// Bind to localhost only by default — your full chat history must not be
+	// reachable from the LAN. Opt into LAN access (e.g. to view from your phone
+	// on the same wifi) with COMMIT_LAN=1; it stays passcode-protected.
+	host := "127.0.0.1"
+	if os.Getenv("COMMIT_LAN") == "1" {
+		host = "0.0.0.0"
+	}
+	addr := fmt.Sprintf("%s:%d", host, defaultPort)
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		log.Fatalf("failed to listen on %s: %v", addr, err)

@@ -45,7 +45,7 @@ func (db *DB) GetReplyQueues() (*ReplyQueues, error) {
 	minNeedsMinutes := db.getIntSetting("needs_reply_min_minutes", 0)  // show all unanswered inbound
 	minAwaitHours := db.getIntSetting("awaiting_reply_min_hours", 12)  // you pinged, silence for 12h+
 	maxStaleDays := db.getIntSetting("replies_max_stale_days", 60)     // ignore long-dead threads
-	includeGroups := db.getIntSetting("replies_include_groups", 0) == 1
+	includeGroups := db.getIntSetting("replies_include_groups", 1) == 1 // track all chats by default
 
 	now := time.Now()
 	staleCutoff := now.Add(-time.Duration(maxStaleDays) * 24 * time.Hour).Unix()

@@ -40,13 +40,33 @@ func TestGetReplyQueues(t *testing.T) {
 		t.Fatalf("GetReplyQueues: %v", err)
 	}
 
-	if len(q.NeedsReply) != 1 || q.NeedsReply[0].ChatJID != "A@s.whatsapp.net" {
-		t.Errorf("needs_reply = %d items, want 1 (Alice): %+v", len(q.NeedsReply), q.NeedsReply)
+	// Groups are tracked by default → Alice (1:1) + the group both need a reply.
+	if len(q.NeedsReply) != 2 {
+		t.Errorf("needs_reply = %d items, want 2 (Alice + group): %+v", len(q.NeedsReply), q.NeedsReply)
+	}
+	if !hasChat(q.NeedsReply, "A@s.whatsapp.net") || !hasChat(q.NeedsReply, "G@g.us") {
+		t.Errorf("needs_reply should contain Alice and the group: %+v", q.NeedsReply)
 	}
 	if len(q.AwaitingReply) != 1 || q.AwaitingReply[0].ChatJID != "B@s.whatsapp.net" {
 		t.Errorf("awaiting_reply = %d items, want 1 (Bob): %+v", len(q.AwaitingReply), q.AwaitingReply)
 	}
-	if len(q.NeedsReply) == 1 && q.NeedsReply[0].WaitingHours < 0.5 {
-		t.Errorf("Alice waiting_hours = %v, want ~1", q.NeedsReply[0].WaitingHours)
+
+	// With groups excluded, only the 1:1 (Alice) remains.
+	db.SetSetting("replies_include_groups", "0")
+	q2, err := db.GetReplyQueues()
+	if err != nil {
+		t.Fatalf("GetReplyQueues (groups off): %v", err)
 	}
+	if len(q2.NeedsReply) != 1 || q2.NeedsReply[0].ChatJID != "A@s.whatsapp.net" {
+		t.Errorf("needs_reply (groups off) = %d, want 1 (Alice): %+v", len(q2.NeedsReply), q2.NeedsReply)
+	}
+}
+
+func hasChat(items []*ReplyItem, jid string) bool {
+	for _, it := range items {
+		if it.ChatJID == jid {
+			return true
+		}
+	}
+	return false
 }

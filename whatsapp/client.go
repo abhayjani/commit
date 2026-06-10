@@ -417,7 +417,47 @@ func extractText(msg *waE2E.Message) string {
 	if msg.ExtendedTextMessage != nil && msg.ExtendedTextMessage.Text != nil {
 		return *msg.ExtendedTextMessage.Text
 	}
+	// Non-text messages: store a labelled placeholder (+ caption) so the
+	// timeline and the who-owes-a-reply queues stay correct. A photo/voice
+	// reply must count as "they replied" — otherwise the direction inverts.
+	if m := msg.ImageMessage; m != nil {
+		return withCaption("📷 Photo", m.GetCaption())
+	}
+	if m := msg.VideoMessage; m != nil {
+		return withCaption("🎥 Video", m.GetCaption())
+	}
+	if m := msg.AudioMessage; m != nil {
+		if m.GetPTT() {
+			return "🎤 Voice message"
+		}
+		return "🎵 Audio"
+	}
+	if m := msg.DocumentMessage; m != nil {
+		label := "📄 Document"
+		if m.GetFileName() != "" {
+			label = "📄 " + m.GetFileName()
+		}
+		return withCaption(label, m.GetCaption())
+	}
+	if msg.StickerMessage != nil {
+		return "🌟 Sticker"
+	}
+	if msg.LocationMessage != nil || msg.LiveLocationMessage != nil {
+		return "📍 Location"
+	}
+	if msg.ContactMessage != nil || msg.ContactsArrayMessage != nil {
+		return "👤 Contact"
+	}
+	// Reactions, edits, deletes, polls, receipts, etc. are intentionally
+	// ignored (return "") so they don't pollute the message timeline.
 	return ""
+}
+
+func withCaption(label, caption string) string {
+	if caption != "" {
+		return label + ": " + caption
+	}
+	return label
 }
 
 func (c *Client) reminderLoop(ctx context.Context) {
@@ -517,7 +557,7 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 				continue
 			}
 			msgTime := time.Unix(int64(ts), 0)
-			if msgTime.Before(time.Now().AddDate(0, 0, -3)) {
+			if msgTime.Before(time.Now().AddDate(0, 0, -60)) { // backfill 60 days so day-one isn't empty
 				continue
 			}
 

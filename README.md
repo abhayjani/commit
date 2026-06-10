@@ -62,10 +62,23 @@ Groups and muted chats are excluded from the reply queues by default. Commitment
 | `replies_max_stale_days` | `60` | ignore threads with no activity past this |
 | `replies_include_groups` | `0` | set `1` to include group chats |
 
+### Networking & safety defaults
+- Binds **`127.0.0.1` only** — your chat history is never exposed to the LAN. Opt into LAN access (e.g. to view from your phone on the same wifi) with `COMMIT_LAN=1`; still passcode-protected.
+- **No phone-home / no auto-update.** The upstream update check is removed (upstream's build can send WhatsApp messages, which would undo read-only mode). CSP is `connect-src 'self'`.
+- **Nightly local backup** of `commit.db` into `~/.commit/backups/` (keeps the last 7). `~/.commit` is your only copy of months of history — back it up (Time Machine yes; iCloud/Dropbox no).
+- History sync backfills the last **60 days** on link.
+
+### Run on login (macOS)
+```bash
+./scripts/install-autostart.sh            # build, register a LaunchAgent, start it
+./scripts/install-autostart.sh uninstall  # stop & remove (data untouched)
+```
+Runs headless on login at `http://localhost:9384`; logs to `~/.commit/commit.log`.
+
 ### Launch flags
-No admin password is requested by default (unlike upstream). Optional env vars:
-- `COMMIT_SETUP_HOSTS=1` — add the cosmetic `commit` → `127.0.0.1` hosts entry (needs admin). Off by default; the app just uses `http://localhost:9384`.
-- `COMMIT_HEADLESS=1` — don't auto-open a browser (for servers / scripts).
+- `COMMIT_LAN=1` — bind `0.0.0.0` for LAN access (off by default).
+- `COMMIT_HEADLESS=1` — don't auto-open a browser (used by the LaunchAgent).
+- `COMMIT_SETUP_HOSTS=1` — add the cosmetic `commit` → `127.0.0.1` hosts entry (needs admin). Off by default.
 
 ## System requirements
 
