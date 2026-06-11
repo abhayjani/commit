@@ -66,7 +66,9 @@ func main() {
 		cancel()
 	}()
 
-	if db.GetAPIKey() != "" && wa.HasSession() {
+	// Reconnect whenever a WhatsApp session exists — the reply queues work
+	// with no API key at all (the key only powers optional AI features).
+	if wa.HasSession() {
 		go wa.Connect(ctx)
 	}
 

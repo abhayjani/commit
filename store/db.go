@@ -116,7 +116,16 @@ func (db *DB) migrate() error {
 		)`)
 	}
 
-	db.setSchemaVersion(2)
+	if version < 3 {
+		db.conn.Exec(`CREATE TABLE IF NOT EXISTS chat_meta (
+			chat_jid   TEXT PRIMARY KEY,
+			priority   TEXT NOT NULL DEFAULT '',
+			tags       TEXT NOT NULL DEFAULT '',
+			updated_at INTEGER NOT NULL DEFAULT 0
+		)`)
+	}
+
+	db.setSchemaVersion(3)
 	return nil
 }
 

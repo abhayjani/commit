@@ -1887,6 +1887,7 @@
             <button class="tab active" onclick="switchTab('all', this)">All <span class="tab-count" id="count-all">0</span></button>
             <button class="tab" onclick="switchTab('needs_reply', this)">Needs reply <span class="tab-count" id="count-needs-reply">0</span></button>
             <button class="tab" onclick="switchTab('awaiting_reply', this)">Waiting on <span class="tab-count" id="count-awaiting">0</span></button>
+            <button class="tab" onclick="switchTab('people', this)">People <span class="tab-count" id="count-people">0</span></button>
             <button class="tab" onclick="switchTab('followups', this)">Follow ups <span class="tab-count" id="count-followups">0</span></button>
             <button class="tab" onclick="switchTab('favorites', this)">Favorites <span class="tab-count" id="count-favorites">0</span></button>
             <button class="tab" onclick="switchTab('you_owe', this)">I owe <span class="tab-count" id="count-you-owe">0</span></button>
@@ -1931,6 +1932,13 @@
                 <div class="settings-row">
                     <span class="settings-row-label">Model</span>
                     <select id="settings-model" onchange="updateModel()" style="font-size: 13px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-sunken); color: var(--ink); font-family: inherit; cursor: pointer;"></select>
+                </div>
+                <div class="settings-row">
+                    <span class="settings-row-label" title="When on, every incoming chat is analyzed by the AI in the background (uses your API key continuously). When off, the AI runs only when you click Draft.">Background commitment mining</span>
+                    <select id="settings-extraction" onchange="updateExtraction()" style="font-size: 13px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-sunken); color: var(--ink); font-family: inherit; cursor: pointer;">
+                        <option value="0">Off — AI only on Draft (free)</option>
+                        <option value="1">On — mine all chats (uses API)</option>
+                    </select>
                 </div>
             </div>
             <div class="settings-group">
@@ -2311,6 +2319,15 @@
                     renderReplies(needs ? (queues.needs_reply || []) : (queues.awaiting_reply || []), needs ? 'needs' : 'awaiting');
                     dashboardLoaded = true;
                     return;
+                } else if (currentTab === 'people') {
+                    const [people, stats] = await Promise.all([
+                        api('/api/people'),
+                        api('/api/commitments/stats')
+                    ]);
+                    updateStats(stats);
+                    renderPeople(people || []);
+                    dashboardLoaded = true;
+                    return;
                 } else if (currentTab === 'followups') {
                     const [followUps, stats] = await Promise.all([
                         api('/api/followups'),
@@ -2352,6 +2369,8 @@
             if (nrEl) nrEl.textContent = stats.needs_reply ?? 0;
             const awEl = document.getElementById('count-awaiting');
             if (awEl) awEl.textContent = stats.awaiting_reply ?? 0;
+            const pplEl = document.getElementById('count-people');
+            if (pplEl) pplEl.textContent = stats.people ?? 0;
             document.getElementById('count-you-owe').textContent = stats.you_owe;
             document.getElementById('count-they-owe').textContent = stats.they_owe;
             document.getElementById('count-resolved').textContent = stats.resolved;
@@ -2389,22 +2408,60 @@
             </div>`;
         }
 
-        // ── Reply / Waiting-on views (derived from message direction, no LLM) ──
-        let replyView = [];
+        // ── Reply / Waiting-on / People views (message timing + your tags, no LLM) ──
+        let replyView = [], replyWhich = 'needs', replyFilter = 'all';
+        let peopleView = [], peopleFilter = 'all', peopleQuery = '';
         function fmtWait(hours) {
             if (hours < 1) return Math.max(1, Math.round(hours * 60)) + 'm';
             if (hours < 24) return Math.round(hours) + 'h';
             return Math.round(hours / 24) + 'd';
         }
+        const PRI_COLOR = { P0: 'var(--danger)', P1: 'var(--warning)', P2: 'var(--info)' };
+        function priBadge(p) {
+            if (!p) return '';
+            return `<span style="font-size:10px;font-weight:700;letter-spacing:.5px;color:${PRI_COLOR[p]};border:1px solid ${PRI_COLOR[p]};border-radius:4px;padding:1px 5px;margin-left:6px;">${p}</span>`;
+        }
+        function tagList(tags) {
+            return (tags || '').split(',').map(t => t.trim()).filter(Boolean);
+        }
+        function tagChips(tags) {
+            return tagList(tags).map(t => `<span style="font-size:10px;color:var(--ink-tertiary);background:var(--surface-sunken);border:1px solid var(--line);border-radius:999px;padding:1px 8px;margin-left:6px;">${esc(t)}</span>`).join('');
+        }
+        function matchesMetaFilter(it, f) {
+            if (f === 'all') return true;
+            if (f.startsWith('tag:')) return tagList(it.tags).some(t => t.toLowerCase() === f.slice(4).toLowerCase());
+            return (it.priority || '') === f;
+        }
+        // Chip bar built from whatever priorities/tags exist in the data.
+        function metaChipBar(items, active, onclickName) {
+            const pris = ['P0', 'P1', 'P2'].filter(p => items.some(it => it.priority === p));
+            const tags = [...new Set(items.flatMap(it => tagList(it.tags)))].sort((a, b) => a.localeCompare(b));
+            if (!pris.length && !tags.length) return '';
+            const chip = (val, label) =>
+                `<button class="followup-filter ${active === val ? 'active' : ''}" onclick="${onclickName}('${escAttr(val)}', this)">${label}</button>`;
+            let html = `<div class="followup-filter-bar">` + chip('all', `All ${items.length}`);
+            for (const p of pris) html += chip(p, `${p} ${items.filter(it => it.priority === p).length}`);
+            for (const t of tags) html += chip('tag:' + t, esc(t));
+            return html + `</div>`;
+        }
+        function setReplyFilter(f, el) { replyFilter = f; renderFilteredReplies(); }
         function renderReplies(items, which) {
             replyView = items || [];
+            replyWhich = which;
+            replyFilter = 'all';
+            renderFilteredReplies();
+        }
+        function renderFilteredReplies() {
             const container = document.getElementById('commitments-container');
-            if (!items || items.length === 0) {
-                const msg = which === 'needs'
-                    ? "You're all caught up — nobody is waiting on a reply from you."
-                    : "Nothing's gone quiet — every message you sent has a reply.";
-                container.innerHTML = `<div class="empty-state">
-                    <div class="empty-state-title">Inbox zero ✨</div>
+            const which = replyWhich;
+            const bar = metaChipBar(replyView, replyFilter, 'setReplyFilter');
+            const items = replyView.filter(it => matchesMetaFilter(it, replyFilter));
+            if (!items.length) {
+                const msg = !replyView.length
+                    ? (which === 'needs' ? "You're all caught up — nobody is waiting on a reply from you." : "Nothing's gone quiet — every message you sent has a reply.")
+                    : 'Nothing matches this filter.';
+                container.innerHTML = bar + `<div class="empty-state">
+                    <div class="empty-state-title">${!replyView.length ? 'All clear' : 'Nothing here'}</div>
                     <div class="empty-state-desc">${msg}</div>
                 </div>`;
                 return;
@@ -2412,30 +2469,116 @@
             const intro = which === 'needs'
                 ? `${items.length} ${items.length === 1 ? 'person is' : 'people are'} waiting on your reply`
                 : `You're waiting on ${items.length} ${items.length === 1 ? 'reply' : 'replies'}`;
-            let html = `<div style="padding:10px 4px 14px;color:var(--ink-tertiary);font-size:13px;">${esc(intro)}</div>`;
+            let html = bar + `<div style="padding:10px 4px 14px;color:var(--ink-tertiary);font-size:13px;">${esc(intro)}</div>`;
             items.forEach((it, i) => {
-                const name = it.person_name || it.chat_name || 'Unknown';
-                const waited = fmtWait(it.waiting_hours);
-                const waitLabel = which === 'needs' ? `waiting ${waited}` : `no reply for ${waited}`;
-                const urgent = it.waiting_hours > 48;
-                const preview = (which === 'awaiting' ? 'You: ' : '') + (it.last_text || '');
-                const grp = it.is_group ? ' <span style="font-weight:400;color:var(--ink-tertiary);font-size:11px;">· group</span>' : '';
-                html += `
-                <div style="display:flex;gap:12px;padding:14px 4px;border-bottom:1px solid var(--line);">
+                html += personCard(it, 'r' + i, which === 'needs' ? `waiting ${fmtWait(it.waiting_hours)}` : `no reply for ${fmtWait(it.waiting_hours)}`,
+                    it.waiting_hours > 48, (which === 'awaiting' ? 'You: ' : '') + (it.last_text || ''), false);
+            });
+            container.innerHTML = html;
+        }
+        // Shared card for reply queues + People view.
+        function personCard(it, id, waitLabel, urgent, preview, muted) {
+            const name = it.person_name || it.name || it.chat_name || 'Unknown';
+            const grp = it.is_group ? ' <span style="font-weight:400;color:var(--ink-tertiary);font-size:11px;">· group</span>' : '';
+            const mutedStyle = muted ? 'opacity:0.55;' : '';
+            const muteLabel = muted ? 'Unmute' : 'Mute';
+            return `
+                <div style="display:flex;gap:12px;padding:14px 4px;border-bottom:1px solid var(--line);${mutedStyle}">
                     <div style="flex:0 0 36px;height:36px;border-radius:50%;background:var(--accent-light);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;color:var(--ink-secondary);">${esc(getInitials(name))}</div>
                     <div style="flex:1;min-width:0;">
                         <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;">
-                            <div style="font-weight:600;font-size:14px;color:var(--ink,#111);">${esc(name)}${grp}</div>
-                            <div style="font-size:11px;white-space:nowrap;color:${urgent ? 'var(--danger,#d33)' : 'var(--ink-tertiary,#999)'};">${esc(waitLabel)}</div>
+                            <div style="font-weight:600;font-size:14px;color:var(--ink);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(name)}${priBadge(it.priority)}${tagChips(it.tags)}${grp}</div>
+                            <div style="font-size:11px;white-space:nowrap;color:${urgent ? 'var(--danger)' : 'var(--ink-tertiary)'};">${esc(waitLabel)}</div>
                         </div>
-                        <div style="font-size:13px;color:var(--ink-secondary,#666);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(preview)}</div>
-                        <div style="margin-top:8px;display:flex;gap:8px;">
-                            <button class="reply-send-btn" onclick="draftReply(${i},'${escAttr(it.chat_jid)}')">✨ Draft reply</button>
-                            <button class="reply-dismiss-btn" onclick="muteReplyChat('${escAttr(it.chat_jid)}','${escAttr(name)}')">Mute</button>
+                        <div style="font-size:13px;color:var(--ink-secondary);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(preview)}</div>
+                        <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
+                            <button class="reply-send-btn" onclick="draftReply('${escAttr(id)}','${escAttr(it.chat_jid)}')">✨ Draft reply</button>
+                            <button class="reply-dismiss-btn" onclick="openTagEditor('${escAttr(id)}','${escAttr(it.chat_jid)}','${escAttr(it.priority || '')}','${escAttr(it.tags || '')}')">🏷 Tag</button>
+                            <button class="reply-dismiss-btn" onclick="muteReplyChat('${escAttr(it.chat_jid)}','${escAttr(name)}')">${muteLabel}</button>
                         </div>
-                        <div class="reply-area hidden" id="rbox-${i}"></div>
+                        <div class="reply-area hidden" id="tbox-${esc(id)}"></div>
+                        <div class="reply-area hidden" id="rbox-${esc(id)}"></div>
                     </div>
                 </div>`;
+        }
+        // ── Tag editor: priority chips + free tags, saved to /api/chats/meta ──
+        function openTagEditor(id, chatJID, priority, tags) {
+            const area = document.getElementById('tbox-' + id);
+            if (!area) return;
+            if (area.dataset.open === '1') {
+                area.dataset.open = '0'; area.classList.add('hidden'); area.innerHTML = '';
+                return;
+            }
+            area.classList.remove('hidden');
+            area.dataset.open = '1';
+            area.dataset.pri = priority || '';
+            const pchip = (p) => `<button type="button" id="pri-${esc(id)}-${p}" onclick="pickPriority('${escAttr(id)}','${p}')" class="followup-filter ${priority === p ? 'active' : ''}" style="${priority === p ? '' : `color:${PRI_COLOR[p]};`}border-color:${PRI_COLOR[p]};">${p}</button>`;
+            area.innerHTML = `
+                <div style="margin-top:10px;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--surface-sunken);">
+                    <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+                        <span style="font-size:11px;color:var(--ink-tertiary);margin-right:2px;">Priority</span>
+                        ${pchip('P0')}${pchip('P1')}${pchip('P2')}
+                    </div>
+                    <div style="display:flex;gap:6px;margin-top:8px;align-items:center;">
+                        <input type="text" class="reply-input" id="tags-${esc(id)}" value="${escAttr(tags || '')}" placeholder="tags, comma separated — e.g. TPF, P0 client, friend" style="flex:1;" onkeydown="if(event.key==='Enter'){event.preventDefault();saveTagEditor('${escAttr(id)}','${escAttr(chatJID)}');}" />
+                        <button class="reply-send-btn" onclick="saveTagEditor('${escAttr(id)}','${escAttr(chatJID)}')">Save</button>
+                    </div>
+                </div>`;
+        }
+        function pickPriority(id, p) {
+            const area = document.getElementById('tbox-' + id);
+            if (!area) return;
+            area.dataset.pri = (area.dataset.pri === p) ? '' : p; // click again to clear
+            for (const q of ['P0', 'P1', 'P2']) {
+                const b = document.getElementById(`pri-${id}-${q}`);
+                if (!b) continue;
+                const on = area.dataset.pri === q;
+                b.classList.toggle('active', on);
+                b.style.color = on ? '' : PRI_COLOR[q];
+            }
+        }
+        async function saveTagEditor(id, chatJID) {
+            const area = document.getElementById('tbox-' + id);
+            const input = document.getElementById('tags-' + id);
+            if (!area || !input) return;
+            try {
+                await api('/api/chats/meta', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({chat_jid: chatJID, priority: area.dataset.pri || '', tags: input.value})
+                });
+                loadDashboard();
+            } catch (e) { console.error('tag save error:', e); }
+        }
+        // ── People: the contact-centric directory ──
+        function setPeopleFilter(f, el) { peopleFilter = f; renderFilteredPeople(); }
+        function renderPeople(items) {
+            peopleView = items || [];
+            peopleFilter = 'all';
+            peopleQuery = '';
+            renderFilteredPeople();
+        }
+        function renderFilteredPeople() {
+            const container = document.getElementById('commitments-container');
+            const bar = metaChipBar(peopleView, peopleFilter, 'setPeopleFilter');
+            const q = peopleQuery.trim().toLowerCase();
+            const items = peopleView.filter(p => matchesMetaFilter(p, peopleFilter))
+                .filter(p => !q || (p.name || '').toLowerCase().includes(q) || tagList(p.tags).some(t => t.toLowerCase().includes(q)));
+            let html = `<div style="padding:8px 4px 4px;"><input type="text" class="reply-input" placeholder="Search people & tags…" value="${escAttr(peopleQuery)}" oninput="peopleQuery=this.value;renderFilteredPeople();" style="width:100%;box-sizing:border-box;" /></div>` + bar;
+            if (!items.length) {
+                container.innerHTML = html + `<div class="empty-state">
+                    <div class="empty-state-title">${peopleView.length ? 'Nothing here' : 'No people yet'}</div>
+                    <div class="empty-state-desc">${peopleView.length ? 'No one matches this filter.' : 'People appear as messages sync from WhatsApp.'}</div>
+                </div>`;
+                return;
+            }
+            items.forEach((p, i) => {
+                let waitLabel, urgent = false;
+                if (p.status === 'needs_reply') { waitLabel = `you owe · ${fmtWait(p.waiting_hours)}`; urgent = p.waiting_hours > 48; }
+                else if (p.status === 'awaiting') { waitLabel = `they owe · ${fmtWait(p.waiting_hours)}`; }
+                else { waitLabel = fmtWait(p.waiting_hours) + ' ago'; }
+                const preview = (p.last_from_me ? 'You: ' : '') + (p.last_text || '');
+                html += personCard(p, 'p' + i, waitLabel, urgent, preview, p.muted);
             });
             container.innerHTML = html;
         }
@@ -2462,10 +2605,10 @@
                 const draft = (res && res.draft) ? res.draft : '';
                 area.innerHTML = `
                     <div style="margin-top:8px;">
-                        <textarea class="reply-input" id="dtext-${i}" rows="3" style="width:100%;box-sizing:border-box;">${esc(draft)}</textarea>
+                        <textarea class="reply-input" id="dtext-${esc(i)}" rows="3" style="width:100%;box-sizing:border-box;">${esc(draft)}</textarea>
                         <div style="display:flex;gap:8px;margin-top:6px;align-items:center;flex-wrap:wrap;">
-                            <button class="reply-send-btn" onclick="copyDraft(${i})">Copy</button>
-                            <button class="reply-dismiss-btn" onclick="draftReply(${i},'${escAttr(chatJID)}')">Close</button>
+                            <button class="reply-send-btn" onclick="copyDraft('${escAttr(i)}')">Copy</button>
+                            <button class="reply-dismiss-btn" onclick="draftReply('${escAttr(i)}','${escAttr(chatJID)}')">Close</button>
                             <span style="font-size:11px;color:var(--ink-tertiary);">edit it, copy, paste into WhatsApp — nothing is sent</span>
                         </div>
                     </div>`;
@@ -2508,7 +2651,7 @@
         }
         function escAttr(s) {
             if (!s) return '';
-            return esc(s).replace(/'/g, '&#39;').replace(/\\/g, '&#92;');
+            return esc(s).replace(/'/g, '&#39;').replace(/"/g, '&quot;').replace(/\\/g, '&#92;');
         }
 
         function showReply(commitmentId, chatJID) {
@@ -3326,6 +3469,21 @@
                 if (psel) psel.value = provider;
                 renderModelOptions(provider, d.model);
                 applyProviderKeyHints(provider);
+            } catch {}
+            try {
+                const x = await api('/api/extraction');
+                const sel = document.getElementById('settings-extraction');
+                if (sel) sel.value = x.enabled ? '1' : '0';
+            } catch {}
+        }
+        async function updateExtraction() {
+            const sel = document.getElementById('settings-extraction');
+            try {
+                await api('/api/extraction', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({enabled: sel.value === '1'})
+                });
             } catch {}
         }
         async function updateProvider() {

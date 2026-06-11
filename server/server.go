@@ -133,6 +133,9 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/followups/nudge", s.requireAuth(s.handleNudge))
 	s.mux.HandleFunc("/api/replies", s.requireAuth(s.handleReplies))
 	s.mux.HandleFunc("/api/reply/draft", s.requireAuth(s.handleDraftReply))
+	s.mux.HandleFunc("/api/people", s.requireAuth(s.handlePeople))
+	s.mux.HandleFunc("/api/chats/meta", s.requireAuth(s.handleChatMeta))
+	s.mux.HandleFunc("/api/extraction", s.requireAuth(s.handleExtraction))
 	s.mux.HandleFunc("/api/export", s.requireAuth(s.handleExport))
 	s.mux.HandleFunc("/api/commitments/auto-resolved", s.requireAuth(s.handleAutoResolved))
 	s.mux.HandleFunc("/api/chats/mute", s.requireAuth(s.handleToggleChatMute))
@@ -633,6 +636,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		"follow_ups":         stats.FollowUps,
 		"needs_reply":        needsReply,
 		"awaiting_reply":     awaitingReply,
+		"people":             s.db.CountChats(),
 		"total_messages":     totalMsgs,
 		"processed_messages": processedMsgs,
 	})
@@ -948,12 +952,86 @@ func (s *Server) handleDraftReply(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"draft": draft})
 }
 
+// handlePeople returns the contact-centric directory: every chat as a person
+// row with priority, tags, reply-debt status, and open-commitment count.
+func (s *Server) handlePeople(w http.ResponseWriter, r *http.Request) {
+	people, err := s.db.GetPeople()
+	if err != nil {
+		log.Printf("people error: %v", err)
+		http.Error(w, "failed to get people", 500)
+		return
+	}
+	if people == nil {
+		people = []*store.Person{}
+	}
+	writeJSON(w, people)
+}
+
+// handleChatMeta reads/writes the user-authored priority + tags on a chat.
+func (s *Server) handleChatMeta(w http.ResponseWriter, r *http.Request) {
+	if r.Method == "GET" {
+		meta, err := s.db.GetAllChatMeta()
+		if err != nil {
+			http.Error(w, "failed", 500)
+			return
+		}
+		writeJSON(w, meta)
+		return
+	}
+	if r.Method != "POST" {
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+	var body struct {
+		ChatJID  string `json:"chat_jid"`
+		Priority string `json:"priority"`
+		Tags     string `json:"tags"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ChatJID == "" {
+		http.Error(w, "chat_jid required", 400)
+		return
+	}
+	m, err := s.db.SetChatMeta(body.ChatJID, body.Priority, body.Tags)
+	if err != nil {
+		http.Error(w, "failed to save", 500)
+		return
+	}
+	writeJSON(w, m)
+}
+
+// handleExtraction toggles background commitment-mining (the only always-on
+// LLM spend). Off by default.
+func (s *Server) handleExtraction(w http.ResponseWriter, r *http.Request) {
+	if r.Method == "GET" {
+		writeJSON(w, map[string]bool{"enabled": s.db.GetExtractionEnabled()})
+		return
+	}
+	if r.Method != "POST" {
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad request", 400)
+		return
+	}
+	if err := s.db.SetExtractionEnabled(body.Enabled); err != nil {
+		http.Error(w, "failed to save", 500)
+		return
+	}
+	writeJSON(w, map[string]bool{"enabled": body.Enabled})
+}
+
 // handleExport bundles commitments + reply queues as one JSON blob — the hook
 // for piping into the Outscroll CRM (the "team/CRM later" path).
 func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 	open, _ := s.db.GetCommitments("open")
 	resolved, _ := s.db.GetCommitments("resolved")
 	replies, _ := s.db.GetReplyQueues()
+	people, _ := s.db.GetPeople()
+	meta, _ := s.db.GetAllChatMeta()
 	if open == nil {
 		open = []*store.Commitment{}
 	}
@@ -965,6 +1043,8 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 		"exported_at": time.Now().Format(time.RFC3339),
 		"commitments": map[string]any{"open": open, "resolved": resolved},
 		"replies":     replies,
+		"people":      people,
+		"chat_meta":   meta,
 	})
 }
 

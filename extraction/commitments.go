@@ -125,6 +125,26 @@ func (e *Extractor) ProcessBatch(ctx context.Context) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
+	// Commitment mining is opt-in (Settings → AI). When off, drain the queue
+	// without any LLM calls so nothing accumulates and nothing is billed.
+	// Reply queues and on-demand drafts are unaffected.
+	if !e.db.GetExtractionEnabled() {
+		msgs, err := e.db.GetUnprocessedMessages(500)
+		if err != nil || len(msgs) == 0 {
+			return err
+		}
+		ids := make([]string, len(msgs))
+		for i, m := range msgs {
+			ids[i] = m.ID
+		}
+		e.db.MarkMessagesProcessed(ids)
+		e.debugMu.Lock()
+		e.lastRunAt = time.Now()
+		e.batchesRun++
+		e.debugMu.Unlock()
+		return nil
+	}
+
 	apiKey := e.db.GetAPIKey()
 	if apiKey == "" {
 		return nil

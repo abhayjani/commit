@@ -42,7 +42,13 @@ Built for running an agency over WhatsApp. Three things on top of the commitment
 - **Needs reply** — last message is *theirs*, you haven't responded. Your "who am I leaving hanging" queue, longest-waiting first.
 - **Waiting on** — last message is *yours*, they've gone quiet past a threshold. Your chase list.
 
-**Voice drafts** — on any item, **✨ Draft reply** writes a response in *your* voice (few-shot from your own past messages, preferring how you write to that specific person), then you **Copy** it and paste into WhatsApp yourself. Nothing is sent. Needs a Claude **or** OpenAI key (this is the only LLM cost on top of commitments).
+**Voice drafts** — on any item, **✨ Draft reply** writes a response in *your* voice (few-shot from your own past messages, preferring how you write to that specific person), then you **Copy** it and paste into WhatsApp yourself. Nothing is sent. Needs a Claude **or** OpenAI key.
+
+**People** — a contact-centric directory of every chat: priority badge, tags, who owes whom and for how long, last message, open commitments. Search by name or tag. Sorted P0-first, then reply debt.
+
+**Priority & tags (the context layer)** — tag any chat **P0/P1/P2** plus free labels (TPF, Client, Friend…) via the 🏷 button on any card. The Needs-reply / Waiting-on tabs and People view grow **filter chips** from whatever you've tagged — so "show me P0 people I owe" is one click. Built to be an ongoing exercise: tag as you go, the tool gets sharper.
+
+**AI is opt-in** — background commitment mining is **OFF by default** (Settings → "Background commitment mining"). With it off, your API key is used *only* when you click Draft; reply tracking, People, tags are all free, and nothing leaves your machine.
 
 **Bring your own provider** — Claude (Anthropic) or GPT (OpenAI), chosen in setup or Settings. Each provider keeps its own key + model; switching is instant. The whole LLM layer is one small `llm` package (`llm.Complete`), so extraction, nudges, and drafts all follow your choice. Default model is cheap on either side (Claude 3.5 Haiku / GPT-4o mini recommended).
 
@@ -52,6 +58,9 @@ Groups and muted chats are excluded from the reply queues by default. Commitment
 - `GET /api/replies` → `{ needs_reply: [...], awaiting_reply: [...] }`
 - `POST /api/reply/draft` `{chat_jid}` → `{ draft }` (drafts only, never sends)
 - `GET/POST /api/provider` → read/switch the active LLM provider (`anthropic` | `openai`)
+- `GET /api/people` → the contact directory (status, priority, tags, open commitments)
+- `GET/POST /api/chats/meta` → read/set a chat's priority + tags
+- `GET/POST /api/extraction` → toggle background commitment mining (default off)
 - `GET /api/export` → all commitments + reply queues as one JSON blob (the hook for piping into the Outscroll CRM)
 
 ### Tunable thresholds (`settings` table — define per your workflow)

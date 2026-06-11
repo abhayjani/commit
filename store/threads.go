@@ -17,6 +17,8 @@ type ReplyItem struct {
 	LastTime     int64   `json:"last_time"` // unix seconds
 	WaitingHours float64 `json:"waiting_hours"`
 	IsGroup      bool    `json:"is_group"`
+	Priority     string  `json:"priority"` // from chat_meta
+	Tags         string  `json:"tags"`     // from chat_meta
 }
 
 // ReplyQueues splits chats into the two follow-up views Outscroll cares about.
@@ -57,16 +59,18 @@ func (db *DB) GetReplyQueues() (*ReplyQueues, error) {
 
 	// One row per chat: its most recent message. Window function picks rn=1.
 	rows, err := db.conn.Query(`
-		SELECT chat_jid, chat_name, sender_name, content, timestamp, is_from_me, is_group
+		SELECT m.chat_jid, m.chat_name, m.sender_name, m.content, m.timestamp, m.is_from_me, m.is_group,
+		       COALESCE(cm.priority, ''), COALESCE(cm.tags, '')
 		FROM (
 			SELECT chat_jid, chat_name, sender_name, content, timestamp, is_from_me, is_group,
 			       ROW_NUMBER() OVER (PARTITION BY chat_jid ORDER BY timestamp DESC, id DESC) AS rn
 			FROM messages
 			WHERE timestamp >= ? `+groupFilter+`
-		)
-		WHERE rn = 1
-		  AND chat_jid NOT IN (SELECT chat_jid FROM muted_chats)
-		ORDER BY timestamp ASC`, staleCutoff)
+		) m
+		LEFT JOIN chat_meta cm ON cm.chat_jid = m.chat_jid
+		WHERE m.rn = 1
+		  AND m.chat_jid NOT IN (SELECT chat_jid FROM muted_chats)
+		ORDER BY m.timestamp ASC`, staleCutoff)
 	if err != nil {
 		return nil, err
 	}
@@ -76,10 +80,10 @@ func (db *DB) GetReplyQueues() (*ReplyQueues, error) {
 	awaitingReply := []*ReplyItem{}
 
 	for rows.Next() {
-		var chatJID, chatName, senderName, content string
+		var chatJID, chatName, senderName, content, priority, tags string
 		var ts int64
 		var fromMe, group int
-		if err := rows.Scan(&chatJID, &chatName, &senderName, &content, &ts, &fromMe, &group); err != nil {
+		if err := rows.Scan(&chatJID, &chatName, &senderName, &content, &ts, &fromMe, &group, &priority, &tags); err != nil {
 			return nil, err
 		}
 
@@ -103,6 +107,8 @@ func (db *DB) GetReplyQueues() (*ReplyQueues, error) {
 			LastTime:     ts,
 			WaitingHours: waitingHours,
 			IsGroup:      group == 1,
+			Priority:     priority,
+			Tags:         tags,
 		}
 
 		if isFromMe {

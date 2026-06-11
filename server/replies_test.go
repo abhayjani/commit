@@ -89,6 +89,56 @@ func TestRepliesRequiresAuth(t *testing.T) {
 	}
 }
 
+// People + chat-meta + extraction endpoints round-trip.
+func TestPeopleMetaExtractionEndpoints(t *testing.T) {
+	s, token := newTestServer(t)
+
+	// People (empty but valid).
+	req := httptest.NewRequest("GET", "/api/people", nil)
+	req.AddCookie(&http.Cookie{Name: "commit_session", Value: token})
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("GET /api/people = %d", rec.Code)
+	}
+
+	// Set meta, read it back.
+	req = httptest.NewRequest("POST", "/api/chats/meta",
+		strings.NewReader(`{"chat_jid":"x@s.whatsapp.net","priority":"p1","tags":"TPF, vip"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: "commit_session", Value: token})
+	rec = httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("POST /api/chats/meta = %d: %s", rec.Code, rec.Body.String())
+	}
+	code, body := get(t, s, token, "/api/chats/meta")
+	if code != 200 {
+		t.Fatalf("GET /api/chats/meta = %d", code)
+	}
+	if _, ok := body["x@s.whatsapp.net"]; !ok {
+		t.Errorf("meta map missing chat: %v", body)
+	}
+
+	// Extraction defaults off; toggles on.
+	code, x := get(t, s, token, "/api/extraction")
+	if code != 200 || string(x["enabled"]) != "false" {
+		t.Errorf("extraction default = %s, want false", x["enabled"])
+	}
+	req = httptest.NewRequest("POST", "/api/extraction", strings.NewReader(`{"enabled":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: "commit_session", Value: token})
+	rec = httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("POST /api/extraction = %d", rec.Code)
+	}
+	_, x = get(t, s, token, "/api/extraction")
+	if string(x["enabled"]) != "true" {
+		t.Errorf("extraction after enable = %s, want true", x["enabled"])
+	}
+}
+
 // The provider switch persists and reads back.
 func TestProviderEndpoint(t *testing.T) {
 	s, token := newTestServer(t)
