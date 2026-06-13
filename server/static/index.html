@@ -1389,6 +1389,8 @@
         }
         .o-search:focus { border-color: var(--ink-tertiary); }
         .o-search::placeholder { color: var(--ink-faint); }
+        .o-reasons { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 5px; }
+        .o-reason { font-size: 10.5px; font-weight: 500; color: var(--info); background: var(--info-light); border-radius: 5px; padding: 1px 7px; }
 
         @media (max-width: 720px) {
             .o-actions { opacity: 1; }
@@ -2546,12 +2548,16 @@
             if (it.last_from_me) prevHtml = `<span style="color:var(--ink-faint);">You:</span> ${esc(it.last_text || '')}`;
             else if (it.is_group && it.last_sender) prevHtml = `<span style="color:var(--ink-secondary);font-weight:500;">${esc(it.last_sender)}:</span> ${esc(it.last_text || '')}`;
             else prevHtml = esc(it.last_text || '');
+            // Why this ranks (local signals) — skip P0/P1/P2, already shown as the badge.
+            const rs = (it.reasons || []).filter(r => r !== 'P0' && r !== 'P1' && r !== 'P2');
+            const reasonsHtml = rs.length ? `<div class="o-reasons">${rs.map(r => `<span class="o-reason">${esc(r)}</span>`).join('')}</div>` : '';
             return `
                 <div class="${rowCls}">
                     <div class="o-av">${esc(getInitials(name))}</div>
                     <div class="o-main">
                         <div class="o-top"><span class="o-name">${esc(name)}</span>${priBadge}${grp}${chips}</div>
                         <div class="o-prev">${prevHtml}</div>
+                        ${reasonsHtml}
                         <div class="reply-area hidden" id="tbox-${esc(id)}"></div>
                     </div>
                     <div class="o-right">

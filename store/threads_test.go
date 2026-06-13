@@ -62,6 +62,62 @@ func TestGetReplyQueues(t *testing.T) {
 	}
 }
 
+func TestReplyScoring(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+	now := time.Now()
+	save := func(id, chat, sender, content string, group, mentions bool, ago time.Duration) {
+		if err := db.SaveMessage(&Message{
+			ID: id, ChatJID: chat, SenderJID: sender, SenderName: sender, ChatName: sender,
+			Content: content, Timestamp: now.Add(-ago), IsFromMe: false, IsGroup: group, MentionsMe: mentions,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	save("m1", "M@g.us", "Riya", "can you check this @you", true, true, 1*time.Hour)            // tagged you
+	save("i1", "I@s.whatsapp.net", "Suhas", "connecting you with Raj from Acme", false, false, 2*time.Hour) // intro
+	save("p1", "P@g.us", "Rando", "lol", true, false, 30*time.Minute)                          // noisy group, no signal
+
+	q, err := db.GetReplyQueues()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(q.NeedsReply) != 3 {
+		t.Fatalf("needs_reply = %d, want 3", len(q.NeedsReply))
+	}
+	by := map[string]*ReplyItem{}
+	for _, it := range q.NeedsReply {
+		by[it.ChatJID] = it
+	}
+	if by["M@g.us"].Score <= by["P@g.us"].Score {
+		t.Errorf("tagged chat (%.1f) should outrank noisy group (%.1f)", by["M@g.us"].Score, by["P@g.us"].Score)
+	}
+	if !containsStr(by["M@g.us"].Reasons, "tagged you") {
+		t.Errorf("M reasons missing 'tagged you': %v", by["M@g.us"].Reasons)
+	}
+	if !containsStr(by["I@s.whatsapp.net"].Reasons, "intro") {
+		t.Errorf("I reasons missing 'intro': %v", by["I@s.whatsapp.net"].Reasons)
+	}
+	// sorted highest-first
+	for i := 1; i < len(q.NeedsReply); i++ {
+		if q.NeedsReply[i-1].Score < q.NeedsReply[i].Score {
+			t.Errorf("not sorted by score desc at %d", i)
+		}
+	}
+}
+
+func containsStr(ss []string, x string) bool {
+	for _, s := range ss {
+		if s == x {
+			return true
+		}
+	}
+	return false
+}
+
 func hasChat(items []*ReplyItem, jid string) bool {
 	for _, it := range items {
 		if it.ChatJID == jid {

@@ -129,7 +129,11 @@ func (db *DB) migrate() error {
 		db.conn.Exec(`CREATE TABLE IF NOT EXISTS archived_chats (chat_jid TEXT PRIMARY KEY)`)
 	}
 
-	db.setSchemaVersion(4)
+	if version < 5 {
+		db.conn.Exec("ALTER TABLE messages ADD COLUMN mentions_me INTEGER NOT NULL DEFAULT 0")
+	}
+
+	db.setSchemaVersion(5)
 	return nil
 }
 

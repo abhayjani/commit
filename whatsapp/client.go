@@ -271,6 +271,7 @@ func (c *Client) handleMessage(evt *events.Message) {
 		Timestamp:  evt.Info.Timestamp,
 		IsFromMe:   isFromMe,
 		IsGroup:    isGroup,
+		MentionsMe: c.messageMentionsMe(evt.Message),
 	}
 
 	if err := c.db.SaveMessage(msg); err != nil {
@@ -488,6 +489,47 @@ func (c *Client) getContainer() (*sqlstore.Container, error) {
 	return container, nil
 }
 
+// messageMentionsMe reports whether this message @-mentions the linked user
+// (matches own phone JID or LID). A strong local priority signal — no AI.
+func (c *Client) messageMentionsMe(msg *waE2E.Message) bool {
+	if msg == nil || msg.ExtendedTextMessage == nil {
+		return false
+	}
+	ci := msg.ExtendedTextMessage.GetContextInfo()
+	if ci == nil {
+		return false
+	}
+	mentioned := ci.GetMentionedJID()
+	if len(mentioned) == 0 {
+		return false
+	}
+	c.mu.RLock()
+	client := c.wa
+	c.mu.RUnlock()
+	if client == nil || client.Store == nil {
+		return false
+	}
+	var mine []string
+	if client.Store.ID != nil {
+		mine = append(mine, client.Store.ID.User)
+	}
+	if !client.Store.LID.IsEmpty() {
+		mine = append(mine, client.Store.LID.User)
+	}
+	for _, mj := range mentioned {
+		jid, err := types.ParseJID(mj)
+		if err != nil {
+			continue
+		}
+		for _, u := range mine {
+			if u != "" && jid.User == u {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func extractText(msg *waE2E.Message) string {
 	if msg == nil {
 		return ""
@@ -670,6 +712,7 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 				Timestamp:  msgTime,
 				IsFromMe:   isFromMe,
 				IsGroup:    isGroup,
+				MentionsMe: c.messageMentionsMe(webMsg.GetMessage()),
 			}
 			if err := c.db.SaveMessage(msg); err == nil {
 				count++

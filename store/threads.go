@@ -1,6 +1,8 @@
 package store
 
 import (
+	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -16,10 +18,13 @@ type ReplyItem struct {
 	LastFromMe   bool    `json:"last_from_me"`
 	LastSender   string  `json:"last_sender"` // who sent the last msg (for group previews)
 	LastTime     int64   `json:"last_time"`   // unix seconds
-	WaitingHours float64 `json:"waiting_hours"`
-	IsGroup      bool    `json:"is_group"`
-	Priority     string  `json:"priority"` // from chat_meta
-	Tags         string  `json:"tags"`     // from chat_meta
+	WaitingHours float64  `json:"waiting_hours"`
+	IsGroup      bool     `json:"is_group"`
+	Priority     string   `json:"priority"`    // from chat_meta
+	Tags         string   `json:"tags"`        // from chat_meta
+	MentionsMe   bool     `json:"mentions_me"` // you were @-tagged
+	Score        float64  `json:"score"`       // local priority score
+	Reasons      []string `json:"reasons"`     // why it ranks (tagged you, intro, …)
 }
 
 // ReplyQueues splits chats into the two follow-up views Outscroll cares about.
@@ -58,12 +63,27 @@ func (db *DB) GetReplyQueues() (*ReplyQueues, error) {
 		groupFilter = ""
 	}
 
+	// Per-chat aggregates for the relationship-weight signal (how two-way the
+	// chat is + how much you engage). One cheap GROUP BY over the local table.
+	type agg struct{ total, mine int }
+	weights := map[string]agg{}
+	if arows, aerr := db.conn.Query(`SELECT chat_jid, COUNT(*), SUM(is_from_me) FROM messages GROUP BY chat_jid`); aerr == nil {
+		for arows.Next() {
+			var j string
+			var total, mine int
+			if err := arows.Scan(&j, &total, &mine); err == nil {
+				weights[j] = agg{total, mine}
+			}
+		}
+		arows.Close()
+	}
+
 	// One row per chat: its most recent message. Window function picks rn=1.
 	rows, err := db.conn.Query(`
-		SELECT m.chat_jid, m.chat_name, m.sender_name, m.content, m.timestamp, m.is_from_me, m.is_group,
+		SELECT m.chat_jid, m.chat_name, m.sender_name, m.content, m.timestamp, m.is_from_me, m.is_group, m.mentions_me,
 		       COALESCE(cm.priority, ''), COALESCE(cm.tags, '')
 		FROM (
-			SELECT chat_jid, chat_name, sender_name, content, timestamp, is_from_me, is_group,
+			SELECT chat_jid, chat_name, sender_name, content, timestamp, is_from_me, is_group, mentions_me,
 			       ROW_NUMBER() OVER (PARTITION BY chat_jid ORDER BY timestamp DESC, id DESC) AS rn
 			FROM messages
 			WHERE timestamp >= ? `+groupFilter+`
@@ -84,8 +104,8 @@ func (db *DB) GetReplyQueues() (*ReplyQueues, error) {
 	for rows.Next() {
 		var chatJID, chatName, senderName, content, priority, tags string
 		var ts int64
-		var fromMe, group int
-		if err := rows.Scan(&chatJID, &chatName, &senderName, &content, &ts, &fromMe, &group, &priority, &tags); err != nil {
+		var fromMe, group, mentions int
+		if err := rows.Scan(&chatJID, &chatName, &senderName, &content, &ts, &fromMe, &group, &mentions, &priority, &tags); err != nil {
 			return nil, err
 		}
 
@@ -112,7 +132,10 @@ func (db *DB) GetReplyQueues() (*ReplyQueues, error) {
 			IsGroup:      group == 1,
 			Priority:     priority,
 			Tags:         tags,
+			MentionsMe:   mentions == 1,
 		}
+		a := weights[chatJID]
+		item.Score, item.Reasons = scoreReplyItem(item, a.total, a.mine)
 
 		if isFromMe {
 			// You sent the last message — waiting on their reply.
@@ -126,7 +149,87 @@ func (db *DB) GetReplyQueues() (*ReplyQueues, error) {
 			}
 		}
 	}
-	return &ReplyQueues{NeedsReply: needsReply, AwaitingReply: awaitingReply}, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sortByScore(needsReply)
+	sortByScore(awaitingReply)
+	return &ReplyQueues{NeedsReply: needsReply, AwaitingReply: awaitingReply}, nil
+}
+
+// sortByScore ranks by importance score, newest as tiebreaker.
+func sortByScore(items []*ReplyItem) {
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].Score != items[j].Score {
+			return items[i].Score > items[j].Score
+		}
+		return items[i].LastTime > items[j].LastTime
+	})
+}
+
+var introKeywords = []string{
+	"connecting you", "connect you with", "introduc", "intro you",
+	"putting you in touch", "you two should connect", "loop you in",
+	"looping you in", "want you to meet", "wanted you to meet",
+	"happy to connect", "pleased to connect", "you should connect",
+}
+
+func isIntro(text string) bool {
+	t := strings.ToLower(text)
+	for _, k := range introKeywords {
+		if strings.Contains(t, k) {
+			return true
+		}
+	}
+	return false
+}
+
+// relWeight is 0..1 — high when you actively engage a chat (two-way + volume).
+func relWeight(total, mine int) float64 {
+	if total == 0 {
+		return 0
+	}
+	ratio := float64(mine) / float64(total)
+	vol := math.Min(1.0, math.Log10(float64(total)+1)/2.0)
+	return ratio * vol
+}
+
+// scoreReplyItem ranks a chat by importance using ONLY local signals — no AI:
+// your tags, whether you were @-tagged, intro language, how much you engage
+// with this person, and recency. Groups are down-weighted unless they earn it.
+func scoreReplyItem(it *ReplyItem, total, mine int) (float64, []string) {
+	s := 0.0
+	reasons := []string{}
+	switch it.Priority {
+	case "P0":
+		s += 100
+		reasons = append(reasons, "P0")
+	case "P1":
+		s += 60
+		reasons = append(reasons, "P1")
+	case "P2":
+		s += 30
+	}
+	if it.MentionsMe {
+		s += 50
+		reasons = append(reasons, "tagged you")
+	}
+	if isIntro(it.LastText) {
+		s += 40
+		reasons = append(reasons, "intro")
+	}
+	rw := relWeight(total, mine)
+	s += rw * 35
+	if rw >= 0.45 {
+		reasons = append(reasons, "you reply often")
+	}
+	if it.WaitingHours < 12 { // gentle recency nudge
+		s += (12 - it.WaitingHours) * 0.5
+	}
+	if it.IsGroup && !it.MentionsMe && it.Priority == "" && !isIntro(it.LastText) {
+		s -= 25 // noisy group, no signal
+	}
+	return s, reasons
 }
 
 // GetRecentThread returns the last `limit` messages in a chat, oldest-first,
