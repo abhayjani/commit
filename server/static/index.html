@@ -7,7 +7,7 @@
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Cdefs%3E%3CradialGradient id='g' cx='50%25' cy='50%25' r='50%25'%3E%3Cstop offset='0%25' stop-color='%231a5c3a'/%3E%3Cstop offset='60%25' stop-color='%230d3320'/%3E%3Cstop offset='100%25' stop-color='%230a1628'/%3E%3C/radialGradient%3E%3C/defs%3E%3Crect width='512' height='512' rx='108' fill='%230a1628'/%3E%3Crect width='512' height='512' rx='108' fill='url(%23g)'/%3E%3Cpath d='M256 72C264 160 296 200 352 232C400 248 440 254 440 256C440 258 400 264 352 280C296 312 264 352 256 440C248 352 216 312 160 280C112 264 72 258 72 256C72 254 112 248 160 232C216 200 248 160 256 72Z' fill='url(%23g)' stroke='%23ddd' stroke-width='6'/%3E%3C/svg%3E" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Newsreader:wght@400;500;600&family=Public+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:wght@400;500;600&family=Public+Sans:wght@400;500;600&display=swap" rel="stylesheet">
     <style>
         :root {
             --canvas: #f5f6f8;
@@ -17,10 +17,10 @@
             --ink-secondary: #444b55;
             --ink-tertiary: #6e7681;
             --ink-faint: #9ea7b3;
-            --line: #c8ced6;
-            --line-strong: #b0b8c2;
-            --accent: #1a1f25;
-            --accent-light: #e8ebf0;
+            --line: #ECECF1;
+            --line-strong: #d8d8e0;
+            --accent: #4F46E5;
+            --accent-light: #EEEEFE;
             --growth: #1a6b3a;
             --growth-light: #dceee2;
             --warning: #9a7d3a;
@@ -28,8 +28,8 @@
             --danger: #a12535;
             --info: #2d5f82;
             --info-light: #dde9f2;
-            --font-display: 'Newsreader', Georgia, serif;
-            --font-body: 'Public Sans', -apple-system, sans-serif;
+            --font-display: 'Inter', -apple-system, sans-serif;
+            --font-body: 'Inter', 'Public Sans', -apple-system, sans-serif;
             --radius-sm: 4px;
             --radius-md: 8px;
             --shadow-sm: 0 1px 3px rgba(0,0,0,0.06);
@@ -46,8 +46,8 @@
             --ink-faint: #3e4046;
             --line: #23252a;
             --line-strong: #34343a;
-            --accent: #AF9358;
-            --accent-light: #1e1a14;
+            --accent: #8B87F5;
+            --accent-light: #1E1B33;
             --growth: #26B5CE;
             --growth-light: #0d2b30;
             --warning: #F0BF00;
@@ -629,7 +629,7 @@
 
         .tab.active {
             color: var(--ink);
-            border-bottom-color: var(--ink);
+            border-bottom-color: var(--accent);
             font-weight: 600;
         }
 
@@ -643,8 +643,8 @@
         }
 
         .tab.active .tab-count {
-            background: var(--ink);
-            color: var(--canvas);
+            background: var(--accent);
+            color: #fff;
         }
 
         /* Summary bar */
@@ -1336,10 +1336,10 @@
         .o-row.p1 { box-shadow: inset 2.5px 0 0 var(--warning); }
 
         .o-av {
-            flex: 0 0 38px; height: 38px; border-radius: 50%;
+            flex: 0 0 44px; height: 44px; border-radius: 50%;
             background: var(--accent-light);
             display: flex; align-items: center; justify-content: center;
-            font-size: 13px; font-weight: 600; color: var(--ink-secondary);
+            font-size: 15px; font-weight: 600; color: var(--ink-secondary);
             letter-spacing: -0.02em; user-select: none;
         }
 
@@ -1390,7 +1390,7 @@
         .o-search:focus { border-color: var(--ink-tertiary); }
         .o-search::placeholder { color: var(--ink-faint); }
         .o-reasons { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 5px; }
-        .o-reason { font-size: 10.5px; font-weight: 500; color: var(--info); background: var(--info-light); border-radius: 5px; padding: 1px 7px; }
+        .o-reason { font-size: 10.5px; font-weight: 500; color: var(--accent); background: var(--accent-light); border-radius: 5px; padding: 1.5px 8px; }
 
         @media (max-width: 720px) {
             .o-actions { opacity: 1; }
@@ -2440,7 +2440,19 @@
         }
 
         function getInitials(name) {
-            return name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
+            const parts = (name || '').trim().split(/\s+/).filter(Boolean);
+            if (!parts.length) return '?';
+            if (parts[0][0] === '+') return '#'; // phone number → neutral glyph
+            return parts.map(w => w[0]).join('').toUpperCase().slice(0, 2);
+        }
+        const AVATAR_COLORS = [
+            ['#E5E7FB', '#4338CA'], ['#D7F2EC', '#0F766E'], ['#FCE4DD', '#C2410C'],
+            ['#FBEFD3', '#B45309'], ['#F0E6FB', '#7C3AED'], ['#DEEBFC', '#1D4ED8'], ['#FCE0E9', '#BE185D']
+        ];
+        function avatarColor(name) {
+            let h = 0;
+            for (const ch of (name || '?')) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+            return AVATAR_COLORS[h % AVATAR_COLORS.length];
         }
 
         const chatSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>';
@@ -2553,7 +2565,7 @@
             const reasonsHtml = rs.length ? `<div class="o-reasons">${rs.map(r => `<span class="o-reason">${esc(r)}</span>`).join('')}</div>` : '';
             return `
                 <div class="${rowCls}">
-                    <div class="o-av">${esc(getInitials(name))}</div>
+                    <div class="o-av" style="background:${avatarColor(name)[0]};color:${avatarColor(name)[1]};">${esc(getInitials(name))}</div>
                     <div class="o-main">
                         <div class="o-top"><span class="o-name">${esc(name)}</span>${priBadge}${grp}${chips}</div>
                         <div class="o-prev">${prevHtml}</div>

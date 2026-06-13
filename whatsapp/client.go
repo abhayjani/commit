@@ -407,17 +407,29 @@ func (c *Client) resolveContactName(jid types.JID) string {
 	if err != nil || !info.Found {
 		return ""
 	}
-	switch {
-	case info.FullName != "":
-		return info.FullName
-	case info.FirstName != "":
-		return info.FirstName
-	case info.BusinessName != "":
-		return info.BusinessName
-	case info.PushName != "":
-		return info.PushName
+	// Prefer a real human name; never let a masked/redacted phone ("+91•••38")
+	// become the display name.
+	for _, cand := range []string{info.FullName, info.FirstName, info.BusinessName, info.PushName} {
+		if looksLikeName(cand) {
+			return cand
+		}
 	}
 	return ""
+}
+
+// looksLikeName rejects empty, masked ("•"), or phone-shaped strings — only
+// something with an actual letter counts as a name.
+func looksLikeName(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" || strings.Contains(s, "•") {
+		return false
+	}
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+			return true
+		}
+	}
+	return false
 }
 
 // isArchived reports whether WhatsApp has this chat archived (synced via

@@ -255,8 +255,11 @@ func (db *DB) GetPeopleFiltered(archivedOnly bool) ([]*Person, error) {
 		p.IsGroup = group == 1
 		p.Muted = muted == 1
 		p.LastSender = senderName
+		if isMasked(p.Name) {
+			p.Name = ""
+		}
 		if p.Name == "" {
-			if !p.LastFromMe && senderName != "" {
+			if !p.LastFromMe && senderName != "" && !isMasked(senderName) {
 				p.Name = senderName
 			} else {
 				p.Name = displayPhone(p.ChatJID)

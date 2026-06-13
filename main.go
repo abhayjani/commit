@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -53,10 +54,17 @@ func main() {
 	// Nightly local backup — ~/.commit is the only copy of months of history.
 	go db.BackupLoop(ctx, filepath.Join(dataDir, "backups"))
 
+	port := defaultPort
+	if p := os.Getenv("COMMIT_PORT"); p != "" {
+		if n, err := strconv.Atoi(p); err == nil && n > 0 {
+			port = n
+		}
+	}
+
 	extractor := extraction.New(db, nil)
 	wa := whatsapp.New(db, dataDir, extractor, ctx)
 	extractor.SetNotifier(wa)
-	srv := server.New(db, wa, extractor, defaultPort)
+	srv := server.New(db, wa, extractor, port)
 
 	go func() {
 		sigCh := make(chan os.Signal, 1)
@@ -87,15 +95,15 @@ func main() {
 	if os.Getenv("COMMIT_LAN") == "1" {
 		host = "0.0.0.0"
 	}
-	addr := fmt.Sprintf("%s:%d", host, defaultPort)
+	addr := fmt.Sprintf("%s:%d", host, port)
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		log.Fatalf("failed to listen on %s: %v", addr, err)
 	}
 
-	url := fmt.Sprintf("http://localhost:%d", defaultPort)
+	url := fmt.Sprintf("http://localhost:%d", port)
 	if hasHostsEntry {
-		url = fmt.Sprintf("http://commit:%d", defaultPort)
+		url = fmt.Sprintf("http://commit:%d", port)
 	}
 	log.Printf("Commit running at %s", url)
 	if os.Getenv("COMMIT_HEADLESS") != "1" {

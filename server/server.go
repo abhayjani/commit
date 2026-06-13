@@ -13,6 +13,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -174,8 +175,17 @@ func (s *Server) sessionCookie(token string, r *http.Request) *http.Cookie {
 	}
 }
 
+// previewMode (COMMIT_PREVIEW=1) renders the dashboard from existing data
+// without a WhatsApp link or passcode — used ONLY for the local preview
+// instance. Never set on the live LaunchAgent.
+func previewMode() bool { return os.Getenv("COMMIT_PREVIEW") == "1" }
+
 func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if previewMode() {
+			next(w, r)
+			return
+		}
 		if !s.db.HasPasscode() {
 			writeJSON(w, map[string]any{"error": "setup_required", "message": "set a passcode first"})
 			return
@@ -198,6 +208,10 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func (s *Server) handleAuthCheck(w http.ResponseWriter, r *http.Request) {
+	if previewMode() {
+		writeJSON(w, map[string]any{"has_passcode": true, "authenticated": true})
+		return
+	}
 	hasPasscode := s.db.HasPasscode()
 	authenticated := false
 	if hasPasscode {
@@ -292,6 +306,10 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	if previewMode() {
+		writeJSON(w, map[string]any{"state": "ready"})
+		return
+	}
 	hasKey := s.db.GetAPIKey() != ""
 	hasSession := s.wa.HasSession()
 	connected := s.wa.IsConnected()

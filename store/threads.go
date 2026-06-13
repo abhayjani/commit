@@ -113,7 +113,10 @@ func (db *DB) GetReplyQueues() (*ReplyQueues, error) {
 		waitingHours := now.Sub(time.Unix(ts, 0)).Hours()
 
 		person := chatName
-		if person == "" && !isFromMe {
+		if isMasked(person) {
+			person = ""
+		}
+		if person == "" && !isFromMe && !isMasked(senderName) {
 			person = senderName
 		}
 		if person == "" {
@@ -320,6 +323,12 @@ func (db *DB) GetMyVoiceSamples(chatJID string, limit int) ([]string, error) {
 
 // displayPhone turns a chat JID into a human-ish label when we have no real
 // name yet — a phone number beats "Unknown" every time.
+// isMasked detects WhatsApp's privacy-redacted strings ("+91∙∙∙∙38") so we
+// never show those as a name.
+func isMasked(s string) bool {
+	return strings.ContainsAny(s, "•∙·*")
+}
+
 func displayPhone(chatJID string) string {
 	if strings.HasSuffix(chatJID, "@g.us") {
 		return "Group chat"
@@ -339,6 +348,10 @@ func displayPhone(chatJID string) string {
 		}
 	}
 	if allDigits && len(id) >= 7 {
+		// India (91 + 10 digits) → "+91 98765 43210"; else a clean "+digits".
+		if len(id) == 12 && strings.HasPrefix(id, "91") {
+			return "+91 " + id[2:7] + " " + id[7:]
+		}
 		return "+" + id
 	}
 	return "Unknown contact"
