@@ -222,26 +222,27 @@ func (db *DB) GetPeopleFiltered(archivedOnly bool) ([]*Person, error) {
 	if archivedOnly {
 		archivedClause = "AND m.chat_jid IN (SELECT chat_jid FROM archived_chats)"
 	}
+	now := time.Now()
 
 	rows, err := db.conn.Query(`
 		SELECT m.chat_jid, m.chat_name, m.sender_name, m.content, m.timestamp, m.is_from_me, m.is_group,
 		       COALESCE(cm.priority, ''), COALESCE(cm.tags, ''),
-		       EXISTS(SELECT 1 FROM muted_chats mu WHERE mu.chat_jid = m.chat_jid),
+		       EXISTS(SELECT 1 FROM muted_chats mu WHERE mu.chat_jid = m.chat_jid AND (mu.muted_until = 0 OR mu.muted_until > ?)),
 		       (SELECT COUNT(*) FROM commitments c WHERE c.chat_jid = m.chat_jid AND c.status = 'open')
 		FROM (
 			SELECT chat_jid, chat_name, sender_name, content, timestamp, is_from_me, is_group,
 			       ROW_NUMBER() OVER (PARTITION BY chat_jid ORDER BY timestamp DESC, id DESC) AS rn
 			FROM messages
+			WHERE is_reaction = 0
 		) m
 		LEFT JOIN chat_meta cm ON cm.chat_jid = m.chat_jid
 		WHERE m.rn = 1 `+archivedClause+`
-		ORDER BY m.timestamp DESC`)
+		ORDER BY m.timestamp DESC`, now.Unix())
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	now := time.Now()
 	people := []*Person{}
 	for rows.Next() {
 		var p Person

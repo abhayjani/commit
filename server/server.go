@@ -700,20 +700,33 @@ func (s *Server) handleToggleChatMute(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", 405)
 		return
 	}
+	// minutes: 0 = forever, <0 = unmute, >0 = mute for N minutes.
 	var body struct {
 		ChatJID  string `json:"chat_jid"`
 		ChatName string `json:"chat_name"`
+		Minutes  int64  `json:"minutes"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ChatJID == "" {
 		http.Error(w, "bad request", 400)
 		return
 	}
-	muted, err := s.db.ToggleChatMute(body.ChatJID, body.ChatName)
-	if err != nil {
+	if body.Minutes < 0 {
+		if err := s.db.Unmute(body.ChatJID); err != nil {
+			http.Error(w, "failed", 500)
+			return
+		}
+		writeJSON(w, map[string]any{"muted": false})
+		return
+	}
+	var until int64 // 0 = forever
+	if body.Minutes > 0 {
+		until = time.Now().Add(time.Duration(body.Minutes) * time.Minute).Unix()
+	}
+	if err := s.db.SetMute(body.ChatJID, body.ChatName, until); err != nil {
 		http.Error(w, "failed", 500)
 		return
 	}
-	writeJSON(w, map[string]any{"muted": muted})
+	writeJSON(w, map[string]any{"muted": true})
 }
 
 func (s *Server) handleMutedChats(w http.ResponseWriter, r *http.Request) {

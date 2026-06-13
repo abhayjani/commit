@@ -452,28 +452,33 @@ func (db *DB) ClearReminder(id string) error {
 
 // Chat muting
 
-func (db *DB) ToggleChatMute(chatJID, chatName string) (bool, error) {
-	var exists int
-	db.conn.QueryRow("SELECT COUNT(*) FROM muted_chats WHERE chat_jid = ?", chatJID).Scan(&exists)
-	if exists > 0 {
-		_, err := db.conn.Exec("DELETE FROM muted_chats WHERE chat_jid = ?", chatJID)
-		return false, err
-	}
-	_, err := db.conn.Exec(
-		"INSERT INTO muted_chats (chat_jid, chat_name, created_at) VALUES (?, ?, ?)",
-		chatJID, chatName, time.Now().Unix(),
-	)
-	return true, err
+// SetMute mutes a chat until `until` (unix secs; 0 = forever). Upsert.
+func (db *DB) SetMute(chatJID, chatName string, until int64) error {
+	_, err := db.conn.Exec(`
+		INSERT INTO muted_chats (chat_jid, chat_name, created_at, muted_until)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(chat_jid) DO UPDATE SET muted_until = excluded.muted_until, chat_name = excluded.chat_name`,
+		chatJID, chatName, time.Now().Unix(), until)
+	return err
 }
+
+func (db *DB) Unmute(chatJID string) error {
+	_, err := db.conn.Exec("DELETE FROM muted_chats WHERE chat_jid = ?", chatJID)
+	return err
+}
+
+// activeMuteClause: a chat is muted if forever (0) or the expiry is still future.
+const activeMuteClause = "(muted_until = 0 OR muted_until > ?)"
 
 func (db *DB) IsChatMuted(chatJID string) bool {
 	var count int
-	db.conn.QueryRow("SELECT COUNT(*) FROM muted_chats WHERE chat_jid = ?", chatJID).Scan(&count)
+	db.conn.QueryRow("SELECT COUNT(*) FROM muted_chats WHERE chat_jid = ? AND "+activeMuteClause, chatJID, time.Now().Unix()).Scan(&count)
 	return count > 0
 }
 
+// GetMutedChatJIDs returns currently-muted chats (expired mutes auto-return).
 func (db *DB) GetMutedChatJIDs() (map[string]bool, error) {
-	rows, err := db.conn.Query("SELECT chat_jid FROM muted_chats")
+	rows, err := db.conn.Query("SELECT chat_jid FROM muted_chats WHERE "+activeMuteClause, time.Now().Unix())
 	if err != nil {
 		return nil, err
 	}

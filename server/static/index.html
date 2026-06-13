@@ -2607,7 +2607,9 @@
                         <div class="o-time${urgent ? ' stale' : ''}">${esc(waitLabel)}</div>
                         <div class="o-actions">
                             <button class="o-btn" onclick="event.stopPropagation();openTagEditor('${escAttr(id)}','${escAttr(it.chat_jid)}','${escAttr(pri)}','${escAttr(it.tags || '')}')">Tag</button>
-                            <button class="o-btn" onclick="event.stopPropagation();muteReplyChat('${escAttr(it.chat_jid)}','${escAttr(name)}')">${muteLabel}</button>
+                            ${muted
+                                ? `<button class="o-btn" onclick="event.stopPropagation();doMute('${escAttr(it.chat_jid)}','${escAttr(name)}',-1)">Unmute</button>`
+                                : `<button class="o-btn" onclick="event.stopPropagation();muteMenu('${escAttr(id)}','${escAttr(it.chat_jid)}','${escAttr(name)}')">Mute</button>`}
                         </div>
                     </div>
                 </div>`;
@@ -2748,12 +2750,24 @@
         }
         document.addEventListener('keydown', e => { if (e.key === 'Escape') closeThread(); });
 
-        async function muteReplyChat(chatJID, name) {
+        // Mute menu: choose a duration (today / 1 week / forever).
+        function muteMenu(id, chatJID, name) {
+            const area = document.getElementById('tbox-' + id);
+            if (!area) return;
+            area.classList.remove('hidden');
+            area.innerHTML = `<div style="margin-top:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+                <span style="font-size:11px;color:var(--ink-tertiary);">Mute for</span>
+                <button class="o-btn" onclick="doMute('${escAttr(chatJID)}','${escAttr(name)}',1440)">Today</button>
+                <button class="o-btn" onclick="doMute('${escAttr(chatJID)}','${escAttr(name)}',10080)">1 week</button>
+                <button class="o-btn" onclick="doMute('${escAttr(chatJID)}','${escAttr(name)}',0)">Forever</button>
+            </div>`;
+        }
+        async function doMute(chatJID, name, minutes) {
             try {
                 await api('/api/chats/mute', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({chat_jid: chatJID, chat_name: name})
+                    body: JSON.stringify({chat_jid: chatJID, chat_name: name, minutes})
                 });
                 loadDashboard();
             } catch (e) {

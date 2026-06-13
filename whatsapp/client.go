@@ -232,18 +232,29 @@ func (c *Client) reconnect(client *whatsmeow.Client) {
 }
 
 func (c *Client) handleMessage(evt *events.Message) {
-	text := extractText(evt.Message)
-	if text == "" {
-		return
-	}
-
 	chatJID := evt.Info.Chat.String()
 	if evt.Info.Chat.Server == types.BroadcastServer {
 		return
 	}
-	if c.db.IsChatMuted(chatJID) {
+
+	// A reaction IS a response — record it so it can soft-close a reply loop.
+	if rm := evt.Message.GetReactionMessage(); rm != nil {
+		if emoji := rm.GetText(); emoji != "" {
+			c.db.SaveMessage(&store.Message{
+				ID: evt.Info.ID, ChatJID: chatJID, SenderJID: evt.Info.Sender.String(),
+				SenderName: evt.Info.PushName, Content: "reacted " + emoji, Timestamp: evt.Info.Timestamp,
+				IsFromMe: evt.Info.IsFromMe, IsGroup: evt.Info.Chat.Server == types.GroupServer, IsReaction: true,
+			})
+		}
 		return
 	}
+
+	text := extractText(evt.Message)
+	if text == "" {
+		return
+	}
+	// (Muted chats keep ingesting; the query layer hides active mutes so timed
+	// mutes can auto-return when they expire.)
 	senderJID := evt.Info.Sender.String()
 	isGroup := evt.Info.Chat.Server == types.GroupServer
 	isFromMe := evt.Info.IsFromMe

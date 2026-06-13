@@ -13,15 +13,16 @@ type Message struct {
 	IsFromMe   bool
 	IsGroup    bool
 	MentionsMe bool
+	IsReaction bool
 	Processed  bool
 }
 
 func (db *DB) SaveMessage(m *Message) error {
 	_, err := db.conn.Exec(`
-		INSERT OR IGNORE INTO messages (id, chat_jid, sender_jid, sender_name, chat_name, content, timestamp, is_from_me, is_group, mentions_me, processed)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+		INSERT OR IGNORE INTO messages (id, chat_jid, sender_jid, sender_name, chat_name, content, timestamp, is_from_me, is_group, mentions_me, is_reaction, processed)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
 		m.ID, m.ChatJID, m.SenderJID, m.SenderName, m.ChatName, m.Content,
-		m.Timestamp.Unix(), boolToInt(m.IsFromMe), boolToInt(m.IsGroup), boolToInt(m.MentionsMe),
+		m.Timestamp.Unix(), boolToInt(m.IsFromMe), boolToInt(m.IsGroup), boolToInt(m.MentionsMe), boolToInt(m.IsReaction),
 	)
 	return err
 }

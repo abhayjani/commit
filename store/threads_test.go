@@ -118,6 +118,50 @@ func containsStr(ss []string, x string) bool {
 	return false
 }
 
+func TestReactionCloseAndTimedMute(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+	now := time.Now()
+	msg := func(id, chat, sender string, fromMe, reaction bool, ago time.Duration) {
+		if err := db.SaveMessage(&Message{
+			ID: id, ChatJID: chat, SenderJID: sender, SenderName: sender, ChatName: sender,
+			Content: "x", Timestamp: now.Add(-ago), IsFromMe: fromMe, IsReaction: reaction,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	msg("a1", "A@s.whatsapp.net", "Al", false, false, 2*time.Hour)  // they messaged → needs reply
+	msg("b1", "B@s.whatsapp.net", "Bo", false, false, 2*time.Hour)  // they messaged...
+	msg("b2", "B@s.whatsapp.net", "me", true, true, 1*time.Hour)    // ...you reacted → closed
+
+	q, _ := db.GetReplyQueues()
+	if !hasChat(q.NeedsReply, "A@s.whatsapp.net") {
+		t.Error("A should need a reply")
+	}
+	if hasChat(q.NeedsReply, "B@s.whatsapp.net") {
+		t.Error("B should be soft-closed by your reaction")
+	}
+
+	// Timed mute: future expiry hides it; expired auto-returns; unmute clears.
+	db.SetMute("A@s.whatsapp.net", "Al", now.Add(time.Hour).Unix())
+	if !db.IsChatMuted("A@s.whatsapp.net") {
+		t.Error("A should be actively muted")
+	}
+	if q2, _ := db.GetReplyQueues(); hasChat(q2.NeedsReply, "A@s.whatsapp.net") {
+		t.Error("muted A should drop from needs_reply")
+	}
+	db.SetMute("A@s.whatsapp.net", "Al", now.Add(-time.Hour).Unix()) // already expired
+	if db.IsChatMuted("A@s.whatsapp.net") {
+		t.Error("expired mute should not be active")
+	}
+	if q3, _ := db.GetReplyQueues(); !hasChat(q3.NeedsReply, "A@s.whatsapp.net") {
+		t.Error("A should auto-return after mute expiry")
+	}
+}
+
 func hasChat(items []*ReplyItem, jid string) bool {
 	for _, it := range items {
 		if it.ChatJID == jid {

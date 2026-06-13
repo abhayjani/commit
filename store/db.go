@@ -133,7 +133,12 @@ func (db *DB) migrate() error {
 		db.conn.Exec("ALTER TABLE messages ADD COLUMN mentions_me INTEGER NOT NULL DEFAULT 0")
 	}
 
-	db.setSchemaVersion(5)
+	if version < 6 {
+		db.conn.Exec("ALTER TABLE messages ADD COLUMN is_reaction INTEGER NOT NULL DEFAULT 0")
+		db.conn.Exec("ALTER TABLE muted_chats ADD COLUMN muted_until INTEGER NOT NULL DEFAULT 0") // 0 = forever
+	}
+
+	db.setSchemaVersion(6)
 	return nil
 }
 

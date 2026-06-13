@@ -67,7 +67,7 @@ func (db *DB) GetReplyQueues() (*ReplyQueues, error) {
 	// chat is + how much you engage). One cheap GROUP BY over the local table.
 	type agg struct{ total, mine int }
 	weights := map[string]agg{}
-	if arows, aerr := db.conn.Query(`SELECT chat_jid, COUNT(*), SUM(is_from_me) FROM messages GROUP BY chat_jid`); aerr == nil {
+	if arows, aerr := db.conn.Query(`SELECT chat_jid, COUNT(*), SUM(is_from_me) FROM messages WHERE is_reaction = 0 GROUP BY chat_jid`); aerr == nil {
 		for arows.Next() {
 			var j string
 			var total, mine int
@@ -78,6 +78,27 @@ func (db *DB) GetReplyQueues() (*ReplyQueues, error) {
 		arows.Close()
 	}
 
+	// Latest reaction per chat — a reaction is a soft-close of the reply loop.
+	type react struct {
+		fromMe bool
+		ts     int64
+	}
+	reactions := map[string]react{}
+	if rr, rerr := db.conn.Query(`SELECT chat_jid, is_from_me, timestamp FROM (
+			SELECT chat_jid, is_from_me, timestamp, ROW_NUMBER() OVER (PARTITION BY chat_jid ORDER BY timestamp DESC) rn
+			FROM messages WHERE is_reaction = 1
+		) WHERE rn = 1`); rerr == nil {
+		for rr.Next() {
+			var j string
+			var fm int
+			var ts int64
+			if err := rr.Scan(&j, &fm, &ts); err == nil {
+				reactions[j] = react{fm == 1, ts}
+			}
+		}
+		rr.Close()
+	}
+
 	// One row per chat: its most recent message. Window function picks rn=1.
 	rows, err := db.conn.Query(`
 		SELECT m.chat_jid, m.chat_name, m.sender_name, m.content, m.timestamp, m.is_from_me, m.is_group, m.mentions_me,
@@ -86,13 +107,13 @@ func (db *DB) GetReplyQueues() (*ReplyQueues, error) {
 			SELECT chat_jid, chat_name, sender_name, content, timestamp, is_from_me, is_group, mentions_me,
 			       ROW_NUMBER() OVER (PARTITION BY chat_jid ORDER BY timestamp DESC, id DESC) AS rn
 			FROM messages
-			WHERE timestamp >= ? `+groupFilter+`
+			WHERE timestamp >= ? AND is_reaction = 0 `+groupFilter+`
 		) m
 		LEFT JOIN chat_meta cm ON cm.chat_jid = m.chat_jid
 		WHERE m.rn = 1
-		  AND m.chat_jid NOT IN (SELECT chat_jid FROM muted_chats)
+		  AND m.chat_jid NOT IN (SELECT chat_jid FROM muted_chats WHERE muted_until = 0 OR muted_until > ?)
 		  AND m.chat_jid NOT IN (SELECT chat_jid FROM archived_chats)
-		ORDER BY m.timestamp DESC`, staleCutoff)
+		ORDER BY m.timestamp DESC`, staleCutoff, now.Unix())
 	if err != nil {
 		return nil, err
 	}
@@ -139,6 +160,17 @@ func (db *DB) GetReplyQueues() (*ReplyQueues, error) {
 		}
 		a := weights[chatJID]
 		item.Score, item.Reasons = scoreReplyItem(item, a.total, a.mine)
+
+		// Reaction = soft-close: a reaction AFTER the last real message closes
+		// the loop in the reactor's direction.
+		if rx, ok := reactions[chatJID]; ok && rx.ts >= ts {
+			if !isFromMe && rx.fromMe {
+				continue // they messaged last, you reacted → you responded
+			}
+			if isFromMe && !rx.fromMe {
+				continue // you messaged last, they reacted → they acknowledged
+			}
+		}
 
 		if isFromMe {
 			// You sent the last message — waiting on their reply.
