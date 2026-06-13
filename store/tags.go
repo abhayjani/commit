@@ -105,6 +105,24 @@ func (db *DB) DistinctPersonChats() ([]string, error) {
 	return out, rows.Err()
 }
 
+// AllChatJIDs lists every distinct chat (1:1 and group) for state sync.
+func (db *DB) AllChatJIDs() ([]string, error) {
+	rows, err := db.conn.Query("SELECT DISTINCT chat_jid FROM messages")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var j string
+		if err := rows.Scan(&j); err != nil {
+			return nil, err
+		}
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
 // UpdateChatName stamps a resolved display name across a chat's messages.
 func (db *DB) UpdateChatName(chatJID, name string) error {
 	if name == "" {
@@ -136,6 +154,36 @@ func (db *DB) DeleteChat(chatJID string) error {
 	return tx.Commit()
 }
 
+// ReplaceArchived swaps in the full set of chats WhatsApp says are archived.
+func (db *DB) ReplaceArchived(jids []string) error {
+	tx, err := db.conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec("DELETE FROM archived_chats"); err != nil {
+		return err
+	}
+	stmt, err := tx.Prepare("INSERT OR IGNORE INTO archived_chats (chat_jid) VALUES (?)")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for _, j := range jids {
+		if _, err := stmt.Exec(j); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// CountArchived is the number of archived chats (for the Archive tab badge).
+func (db *DB) CountArchived() int {
+	var n int
+	db.conn.QueryRow("SELECT COUNT(*) FROM archived_chats").Scan(&n)
+	return n
+}
+
 // CountChats is the number of distinct chats we've seen — the People count.
 func (db *DB) CountChats() int {
 	var n int
@@ -153,6 +201,7 @@ type Person struct {
 	Tags            string  `json:"tags"`
 	LastText        string  `json:"last_text"`
 	LastFromMe      bool    `json:"last_from_me"`
+	LastSender      string  `json:"last_sender"` // who sent the last msg (group previews)
 	LastTime        int64   `json:"last_time"`
 	WaitingHours    float64 `json:"waiting_hours"`
 	Status          string  `json:"status"` // "needs_reply" | "awaiting" | "idle"
@@ -160,10 +209,19 @@ type Person struct {
 	OpenCommitments int     `json:"open_commitments"`
 }
 
-// GetPeople returns every chat as a person-centric row, sorted by priority
-// (P0 first), then reply debt, then recency.
-func (db *DB) GetPeople() ([]*Person, error) {
+// GetPeople returns the active contact directory (archived chats excluded).
+func (db *DB) GetPeople() ([]*Person, error) { return db.GetPeopleFiltered(false) }
+
+// GetPeopleFiltered returns chats as person-centric rows sorted by priority
+// (P0 first), then reply debt, then recency. archivedOnly switches between the
+// active directory and the Archive view (mirrors what you archived in WhatsApp).
+func (db *DB) GetPeopleFiltered(archivedOnly bool) ([]*Person, error) {
 	minAwaitHours := db.getIntSetting("awaiting_reply_min_hours", 12)
+
+	archivedClause := "AND m.chat_jid NOT IN (SELECT chat_jid FROM archived_chats)"
+	if archivedOnly {
+		archivedClause = "AND m.chat_jid IN (SELECT chat_jid FROM archived_chats)"
+	}
 
 	rows, err := db.conn.Query(`
 		SELECT m.chat_jid, m.chat_name, m.sender_name, m.content, m.timestamp, m.is_from_me, m.is_group,
@@ -176,7 +234,7 @@ func (db *DB) GetPeople() ([]*Person, error) {
 			FROM messages
 		) m
 		LEFT JOIN chat_meta cm ON cm.chat_jid = m.chat_jid
-		WHERE m.rn = 1
+		WHERE m.rn = 1 `+archivedClause+`
 		ORDER BY m.timestamp DESC`)
 	if err != nil {
 		return nil, err
@@ -196,6 +254,7 @@ func (db *DB) GetPeople() ([]*Person, error) {
 		p.LastFromMe = fromMe == 1
 		p.IsGroup = group == 1
 		p.Muted = muted == 1
+		p.LastSender = senderName
 		if p.Name == "" {
 			if !p.LastFromMe && senderName != "" {
 				p.Name = senderName

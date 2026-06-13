@@ -419,8 +419,25 @@ func (c *Client) resolveContactName(jid types.JID) string {
 	return ""
 }
 
-// nameResolverLoop periodically stamps real contact names onto stored chats.
-// Runs a bit after connect (so contact sync has landed) and every 10 min after.
+// isArchived reports whether WhatsApp has this chat archived (synced via
+// app-state). Mirrors your phone's archive into Orbit.
+func (c *Client) isArchived(jid types.JID) bool {
+	c.mu.RLock()
+	client := c.wa
+	c.mu.RUnlock()
+	if client == nil || client.Store == nil || client.Store.ChatSettings == nil {
+		return false
+	}
+	s, err := client.Store.ChatSettings.GetChatSettings(context.Background(), jid)
+	if err != nil {
+		return false
+	}
+	return s.Found && s.Archived
+}
+
+// nameResolverLoop periodically syncs WhatsApp-side state into Orbit: real
+// contact names (1:1) and which chats you've archived. Runs a bit after connect
+// (so app-state sync has landed) and every 10 min after.
 func (c *Client) nameResolverLoop(ctx context.Context) {
 	select {
 	case <-ctx.Done():
@@ -428,17 +445,25 @@ func (c *Client) nameResolverLoop(ctx context.Context) {
 	case <-time.After(15 * time.Second):
 	}
 	for {
-		jids, err := c.db.DistinctPersonChats()
-		if err == nil {
+		// Resolve real names for 1:1 chats.
+		if jids, err := c.db.DistinctPersonChats(); err == nil {
 			for _, j := range jids {
-				jid, err := types.ParseJID(j)
-				if err != nil {
-					continue
-				}
-				if name := c.resolveContactName(jid); name != "" {
-					c.db.UpdateChatName(j, name)
+				if jid, err := types.ParseJID(j); err == nil {
+					if name := c.resolveContactName(jid); name != "" {
+						c.db.UpdateChatName(j, name)
+					}
 				}
 			}
+		}
+		// Mirror archive state across all chats (1:1 + groups).
+		if jids, err := c.db.AllChatJIDs(); err == nil {
+			archived := []string{}
+			for _, j := range jids {
+				if jid, err := types.ParseJID(j); err == nil && c.isArchived(jid) {
+					archived = append(archived, j)
+				}
+			}
+			c.db.ReplaceArchived(archived)
 		}
 		select {
 		case <-ctx.Done():

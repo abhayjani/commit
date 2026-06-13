@@ -133,6 +133,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/followups/nudge", s.requireAuth(s.handleNudge))
 	s.mux.HandleFunc("/api/replies", s.requireAuth(s.handleReplies))
 	s.mux.HandleFunc("/api/people", s.requireAuth(s.handlePeople))
+	s.mux.HandleFunc("/api/archived", s.requireAuth(s.handleArchived))
 	s.mux.HandleFunc("/api/chats/meta", s.requireAuth(s.handleChatMeta))
 	s.mux.HandleFunc("/api/chats/forget", s.requireAuth(s.handleForget))
 	s.mux.HandleFunc("/api/extraction", s.requireAuth(s.handleExtraction))
@@ -637,6 +638,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		"needs_reply":        needsReply,
 		"awaiting_reply":     awaitingReply,
 		"people":             s.db.CountChats(),
+		"archived":           s.db.CountArchived(),
 		"total_messages":     totalMsgs,
 		"processed_messages": processedMsgs,
 	})
@@ -933,6 +935,20 @@ func (s *Server) handlePeople(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Printf("people error: %v", err)
 		http.Error(w, "failed to get people", 500)
+		return
+	}
+	if people == nil {
+		people = []*store.Person{}
+	}
+	writeJSON(w, people)
+}
+
+// handleArchived returns the chats you archived in WhatsApp (Archive tab).
+func (s *Server) handleArchived(w http.ResponseWriter, r *http.Request) {
+	people, err := s.db.GetPeopleFiltered(true)
+	if err != nil {
+		log.Printf("archived error: %v", err)
+		http.Error(w, "failed to get archived", 500)
 		return
 	}
 	if people == nil {

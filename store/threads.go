@@ -14,7 +14,8 @@ type ReplyItem struct {
 	PersonName   string  `json:"person_name"`
 	LastText     string  `json:"last_text"`
 	LastFromMe   bool    `json:"last_from_me"`
-	LastTime     int64   `json:"last_time"` // unix seconds
+	LastSender   string  `json:"last_sender"` // who sent the last msg (for group previews)
+	LastTime     int64   `json:"last_time"`   // unix seconds
 	WaitingHours float64 `json:"waiting_hours"`
 	IsGroup      bool    `json:"is_group"`
 	Priority     string  `json:"priority"` // from chat_meta
@@ -70,6 +71,7 @@ func (db *DB) GetReplyQueues() (*ReplyQueues, error) {
 		LEFT JOIN chat_meta cm ON cm.chat_jid = m.chat_jid
 		WHERE m.rn = 1
 		  AND m.chat_jid NOT IN (SELECT chat_jid FROM muted_chats)
+		  AND m.chat_jid NOT IN (SELECT chat_jid FROM archived_chats)
 		ORDER BY m.timestamp DESC`, staleCutoff)
 	if err != nil {
 		return nil, err
@@ -104,6 +106,7 @@ func (db *DB) GetReplyQueues() (*ReplyQueues, error) {
 			PersonName:   person,
 			LastText:     snippet(content, 140),
 			LastFromMe:   isFromMe,
+			LastSender:   senderName,
 			LastTime:     ts,
 			WaitingHours: waitingHours,
 			IsGroup:      group == 1,

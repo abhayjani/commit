@@ -1957,6 +1957,7 @@
             <button class="tab active" onclick="switchTab('needs_reply', this)">You need to reply <span class="tab-count" id="count-needs-reply">0</span></button>
             <button class="tab" onclick="switchTab('awaiting_reply', this)">You need to follow up <span class="tab-count" id="count-awaiting">0</span></button>
             <button class="tab" onclick="switchTab('people', this)">People <span class="tab-count" id="count-people">0</span></button>
+            <button class="tab" onclick="switchTab('archive', this)">Archive <span class="tab-count" id="count-archive">0</span></button>
         </div>
 
 
@@ -2383,13 +2384,13 @@
                     renderReplies(needs ? (queues.needs_reply || []) : (queues.awaiting_reply || []), needs ? 'needs' : 'awaiting');
                     dashboardLoaded = true;
                     return;
-                } else if (currentTab === 'people') {
+                } else if (currentTab === 'people' || currentTab === 'archive') {
                     const [people, stats] = await Promise.all([
-                        api('/api/people'),
+                        api(currentTab === 'archive' ? '/api/archived' : '/api/people'),
                         api('/api/commitments/stats')
                     ]);
                     updateStats(stats);
-                    renderPeople(people || []);
+                    renderPeople(people || [], currentTab === 'archive');
                     dashboardLoaded = true;
                     return;
                 } else if (currentTab === 'followups') {
@@ -2432,6 +2433,7 @@
             set('count-needs-reply', stats.needs_reply);
             set('count-awaiting', stats.awaiting_reply);
             set('count-people', stats.people);
+            set('count-archive', stats.archived);
             set('settings-msgs', stats.processed_messages);
         }
 
@@ -2465,7 +2467,7 @@
 
         // ── Reply / Waiting-on / People views (message timing + your tags, no LLM) ──
         let replyView = [], replyWhich = 'needs', replyFilter = 'all';
-        let peopleView = [], peopleFilter = 'all', peopleQuery = '';
+        let peopleView = [], peopleFilter = 'all', peopleQuery = '', peopleIsArchive = false;
         function fmtWait(hours) {
             if (hours < 1) return Math.max(1, Math.round(hours * 60)) + 'm';
             if (hours < 24) return Math.round(hours) + 'h';
@@ -2526,13 +2528,12 @@
                 : `You're waiting on ${items.length} ${items.length === 1 ? 'reply' : 'replies'}`;
             let html = bar + `<div class="o-intro">${esc(intro)}</div>`;
             items.forEach((it, i) => {
-                html += personCard(it, 'r' + i, which === 'needs' ? `waiting ${fmtWait(it.waiting_hours)}` : `no reply for ${fmtWait(it.waiting_hours)}`,
-                    it.waiting_hours > 48, (which === 'awaiting' ? 'You: ' : '') + (it.last_text || ''), false);
+                html += personCard(it, 'r' + i, which === 'needs' ? `waiting ${fmtWait(it.waiting_hours)}` : `no reply for ${fmtWait(it.waiting_hours)}`, it.waiting_hours > 48, false);
             });
             container.innerHTML = html;
         }
         // Shared card for reply queues + People view.
-        function personCard(it, id, waitLabel, urgent, preview, muted) {
+        function personCard(it, id, waitLabel, urgent, muted) {
             const name = it.person_name || it.name || it.chat_name || 'Unknown';
             const pri = it.priority || '';
             const rowCls = 'o-row' + (muted ? ' muted' : '') + (pri ? ' ' + pri.toLowerCase() : '');
@@ -2540,12 +2541,17 @@
             const grp = it.is_group ? `<span class="o-grp">group</span>` : '';
             const chips = tagList(it.tags).map(t => `<span class="o-chip">${esc(t)}</span>`).join('');
             const muteLabel = muted ? 'Unmute' : 'Mute';
+            // WhatsApp-style preview: "You:" / "Sender:" prefix, esp. for groups.
+            let prevHtml;
+            if (it.last_from_me) prevHtml = `<span style="color:var(--ink-faint);">You:</span> ${esc(it.last_text || '')}`;
+            else if (it.is_group && it.last_sender) prevHtml = `<span style="color:var(--ink-secondary);font-weight:500;">${esc(it.last_sender)}:</span> ${esc(it.last_text || '')}`;
+            else prevHtml = esc(it.last_text || '');
             return `
                 <div class="${rowCls}">
                     <div class="o-av">${esc(getInitials(name))}</div>
                     <div class="o-main">
                         <div class="o-top"><span class="o-name">${esc(name)}</span>${priBadge}${grp}${chips}</div>
-                        <div class="o-prev">${esc(preview)}</div>
+                        <div class="o-prev">${prevHtml}</div>
                         <div class="reply-area hidden" id="tbox-${esc(id)}"></div>
                     </div>
                     <div class="o-right">
@@ -2611,10 +2617,11 @@
         }
         // ── People: the contact-centric directory ──
         function setPeopleFilter(f, el) { peopleFilter = f; renderFilteredPeople(); }
-        function renderPeople(items) {
+        function renderPeople(items, isArchive) {
             peopleView = items || [];
             peopleFilter = 'all';
             peopleQuery = '';
+            peopleIsArchive = !!isArchive;
             renderFilteredPeople();
         }
         function renderFilteredPeople() {
@@ -2623,11 +2630,14 @@
             const q = peopleQuery.trim().toLowerCase();
             const items = peopleView.filter(p => matchesMetaFilter(p, peopleFilter))
                 .filter(p => !q || (p.name || '').toLowerCase().includes(q) || tagList(p.tags).some(t => t.toLowerCase().includes(q)));
-            let html = `<input type="text" class="o-search" placeholder="Search people & tags…" value="${escAttr(peopleQuery)}" oninput="peopleQuery=this.value;renderFilteredPeople();" />` + bar;
+            const ph = peopleIsArchive ? 'Search archived…' : 'Search people & tags…';
+            let html = `<input type="text" class="o-search" placeholder="${ph}" value="${escAttr(peopleQuery)}" oninput="peopleQuery=this.value;renderFilteredPeople();" />` + bar;
             if (!items.length) {
+                const emptyTitle = peopleView.length ? 'Nothing here' : (peopleIsArchive ? 'No archived chats' : 'No people yet');
+                const emptyDesc = peopleView.length ? 'No one matches this filter.' : (peopleIsArchive ? 'Chats you archive in WhatsApp show up here.' : 'People appear as messages sync from WhatsApp.');
                 container.innerHTML = html + `<div class="empty-state">
-                    <div class="empty-state-title">${peopleView.length ? 'Nothing here' : 'No people yet'}</div>
-                    <div class="empty-state-desc">${peopleView.length ? 'No one matches this filter.' : 'People appear as messages sync from WhatsApp.'}</div>
+                    <div class="empty-state-title">${emptyTitle}</div>
+                    <div class="empty-state-desc">${emptyDesc}</div>
                 </div>`;
                 return;
             }
@@ -2636,8 +2646,7 @@
                 if (p.status === 'needs_reply') { waitLabel = `reply · ${fmtWait(p.waiting_hours)}`; urgent = p.waiting_hours > 48; }
                 else if (p.status === 'awaiting') { waitLabel = `follow up · ${fmtWait(p.waiting_hours)}`; }
                 else { waitLabel = fmtWait(p.waiting_hours) + ' ago'; }
-                const preview = (p.last_from_me ? 'You: ' : '') + (p.last_text || '');
-                html += personCard(p, 'p' + i, waitLabel, urgent, preview, p.muted);
+                html += personCard(p, 'p' + i, waitLabel, urgent, p.muted);
             });
             container.innerHTML = html;
         }

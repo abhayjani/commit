@@ -125,7 +125,11 @@ func (db *DB) migrate() error {
 		)`)
 	}
 
-	db.setSchemaVersion(3)
+	if version < 4 {
+		db.conn.Exec(`CREATE TABLE IF NOT EXISTS archived_chats (chat_jid TEXT PRIMARY KEY)`)
+	}
+
+	db.setSchemaVersion(4)
 	return nil
 }
 

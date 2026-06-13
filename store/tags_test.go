@@ -69,6 +69,66 @@ func TestChatMetaPriorityTagsAndPeople(t *testing.T) {
 	}
 }
 
+func TestArchiveExclusionAndGroupSender(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+
+	now := time.Now()
+	saveMsg := func(id, chat, sender, chatName string, fromMe, group bool, ago time.Duration) {
+		if err := db.SaveMessage(&Message{
+			ID: id, ChatJID: chat, SenderJID: sender, SenderName: sender,
+			ChatName: chatName, Content: "msg " + id, Timestamp: now.Add(-ago),
+			IsFromMe: fromMe, IsGroup: group,
+		}); err != nil {
+			t.Fatalf("save %s: %v", id, err)
+		}
+	}
+	saveMsg("a1", "A@s.whatsapp.net", "Alice", "Alice", false, false, 1*time.Hour) // needs reply, 1:1
+	saveMsg("g1", "G@g.us", "Celestine", "My Group", false, true, 2*time.Hour)      // group, sender Celestine
+
+	q, err := db.GetReplyQueues()
+	if err != nil {
+		t.Fatalf("queues: %v", err)
+	}
+	if len(q.NeedsReply) != 2 {
+		t.Fatalf("needs_reply = %d, want 2", len(q.NeedsReply))
+	}
+	// group row carries the sender for "Sender: message" previews
+	if !hasChat(q.NeedsReply, "G@g.us") {
+		t.Fatal("group chat missing")
+	}
+	for _, it := range q.NeedsReply {
+		if it.ChatJID == "G@g.us" && it.LastSender != "Celestine" {
+			t.Errorf("group last_sender = %q, want Celestine", it.LastSender)
+		}
+	}
+
+	// Archive the group → it drops out of queues and People, shows in archived.
+	if err := db.ReplaceArchived([]string{"G@g.us"}); err != nil {
+		t.Fatalf("ReplaceArchived: %v", err)
+	}
+	q2, _ := db.GetReplyQueues()
+	if hasChat(q2.NeedsReply, "G@g.us") {
+		t.Error("archived group should be excluded from needs_reply")
+	}
+	people, _ := db.GetPeopleFiltered(false)
+	for _, p := range people {
+		if p.ChatJID == "G@g.us" {
+			t.Error("archived group should be excluded from People")
+		}
+	}
+	arch, _ := db.GetPeopleFiltered(true)
+	if len(arch) != 1 || arch[0].ChatJID != "G@g.us" {
+		t.Errorf("archived view = %+v, want just the group", arch)
+	}
+	if db.CountArchived() != 1 {
+		t.Errorf("CountArchived = %d, want 1", db.CountArchived())
+	}
+}
+
 func TestExtractionToggleDefaultOff(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
