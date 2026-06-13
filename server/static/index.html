@@ -1318,6 +1318,83 @@
             color: var(--growth);
         }
 
+        /* ── Orbit row design system ── */
+        .o-row {
+            display: flex;
+            gap: 13px;
+            padding: 11px 12px;
+            margin: 0 -12px;
+            border-radius: 10px;
+            border-bottom: 1px solid var(--line);
+            align-items: flex-start;
+            transition: background 0.12s ease;
+        }
+        .o-row:last-child { border-bottom: none; }
+        .o-row:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
+        .o-row.muted { opacity: 0.5; }
+        .o-row.p0 { box-shadow: inset 2.5px 0 0 var(--danger); }
+        .o-row.p1 { box-shadow: inset 2.5px 0 0 var(--warning); }
+
+        .o-av {
+            flex: 0 0 38px; height: 38px; border-radius: 50%;
+            background: var(--accent-light);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 13px; font-weight: 600; color: var(--ink-secondary);
+            letter-spacing: -0.02em; user-select: none;
+        }
+
+        .o-main { flex: 1; min-width: 0; }
+        .o-top { display: flex; align-items: center; gap: 7px; }
+        .o-name {
+            font-size: 14.5px; font-weight: 600; color: var(--ink);
+            letter-spacing: -0.01em; white-space: nowrap; overflow: hidden;
+            text-overflow: ellipsis; max-width: 58%;
+        }
+        .o-grp { font-size: 11px; font-weight: 500; color: var(--ink-faint); flex-shrink: 0; }
+        .o-chip {
+            font-size: 10.5px; font-weight: 500; color: var(--ink-secondary);
+            background: var(--surface-sunken); border: 1px solid var(--line);
+            border-radius: 5px; padding: 1px 6px; flex-shrink: 0; white-space: nowrap;
+        }
+        .o-pri { font-size: 9.5px; font-weight: 700; letter-spacing: 0.04em; border-radius: 4px; padding: 1.5px 5px; flex-shrink: 0; }
+        .o-pri.P0 { color: #fff; background: var(--danger); }
+        .o-pri.P1 { color: var(--warning); border: 1px solid var(--warning); }
+        .o-pri.P2 { color: var(--info); border: 1px solid var(--info); }
+
+        .o-prev {
+            font-size: 13px; color: var(--ink-tertiary); margin-top: 3px;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.45;
+        }
+
+        .o-right { flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-end; gap: 9px; padding-top: 2px; }
+        .o-time { font-size: 11px; color: var(--ink-faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
+        .o-time.stale { color: var(--danger); }
+
+        .o-actions { display: flex; gap: 5px; opacity: 0; transition: opacity 0.12s ease; }
+        .o-row:hover .o-actions { opacity: 1; }
+        .o-btn {
+            background: none; border: 1px solid var(--line); border-radius: 6px;
+            padding: 3.5px 9px; font-size: 11.5px; font-weight: 500; font-family: var(--font-body);
+            color: var(--ink-secondary); cursor: pointer; transition: all 0.12s ease; white-space: nowrap;
+        }
+        .o-btn:hover { border-color: var(--ink-tertiary); color: var(--ink); background: var(--surface-sunken); }
+        .o-btn.danger:hover { border-color: var(--danger); color: var(--danger); }
+
+        .o-intro { padding: 14px 0 10px; color: var(--ink-tertiary); font-size: 13px; }
+        .o-search {
+            width: 100%; box-sizing: border-box; margin: 6px 0 4px;
+            padding: 9px 13px; font-family: var(--font-body); font-size: 13px;
+            border: 1px solid var(--line); border-radius: 9px;
+            background: var(--surface); color: var(--ink); outline: none;
+        }
+        .o-search:focus { border-color: var(--ink-tertiary); }
+        .o-search::placeholder { color: var(--ink-faint); }
+
+        @media (max-width: 720px) {
+            .o-actions { opacity: 1; }
+            .o-name { max-width: 44%; }
+        }
+
         .commitment-meta {
             display: flex;
             align-items: center;
@@ -2447,7 +2524,7 @@
             const intro = which === 'needs'
                 ? `${items.length} ${items.length === 1 ? 'person is' : 'people are'} waiting on your reply`
                 : `You're waiting on ${items.length} ${items.length === 1 ? 'reply' : 'replies'}`;
-            let html = bar + `<div style="padding:10px 4px 14px;color:var(--ink-tertiary);font-size:13px;">${esc(intro)}</div>`;
+            let html = bar + `<div class="o-intro">${esc(intro)}</div>`;
             items.forEach((it, i) => {
                 html += personCard(it, 'r' + i, which === 'needs' ? `waiting ${fmtWait(it.waiting_hours)}` : `no reply for ${fmtWait(it.waiting_hours)}`,
                     it.waiting_hours > 48, (which === 'awaiting' ? 'You: ' : '') + (it.last_text || ''), false);
@@ -2457,23 +2534,26 @@
         // Shared card for reply queues + People view.
         function personCard(it, id, waitLabel, urgent, preview, muted) {
             const name = it.person_name || it.name || it.chat_name || 'Unknown';
-            const grp = it.is_group ? ' <span style="font-weight:400;color:var(--ink-tertiary);font-size:11px;">· group</span>' : '';
-            const mutedStyle = muted ? 'opacity:0.55;' : '';
+            const pri = it.priority || '';
+            const rowCls = 'o-row' + (muted ? ' muted' : '') + (pri ? ' ' + pri.toLowerCase() : '');
+            const priBadge = pri ? `<span class="o-pri ${pri}">${pri}</span>` : '';
+            const grp = it.is_group ? `<span class="o-grp">group</span>` : '';
+            const chips = tagList(it.tags).map(t => `<span class="o-chip">${esc(t)}</span>`).join('');
             const muteLabel = muted ? 'Unmute' : 'Mute';
             return `
-                <div style="display:flex;gap:12px;padding:14px 4px;border-bottom:1px solid var(--line);${mutedStyle}">
-                    <div style="flex:0 0 36px;height:36px;border-radius:50%;background:var(--accent-light);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;color:var(--ink-secondary);">${esc(getInitials(name))}</div>
-                    <div style="flex:1;min-width:0;">
-                        <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;">
-                            <div style="font-weight:600;font-size:14px;color:var(--ink);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(name)}${priBadge(it.priority)}${tagChips(it.tags)}${grp}</div>
-                            <div style="font-size:11px;white-space:nowrap;color:${urgent ? 'var(--danger)' : 'var(--ink-tertiary)'};">${esc(waitLabel)}</div>
-                        </div>
-                        <div style="font-size:13px;color:var(--ink-secondary);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(preview)}</div>
-                        <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
-                            <button class="reply-send-btn" onclick="openTagEditor('${escAttr(id)}','${escAttr(it.chat_jid)}','${escAttr(it.priority || '')}','${escAttr(it.tags || '')}')">🏷 Tag &amp; priority</button>
-                            <button class="reply-dismiss-btn" onclick="muteReplyChat('${escAttr(it.chat_jid)}','${escAttr(name)}')">${muteLabel}</button>
-                        </div>
+                <div class="${rowCls}">
+                    <div class="o-av">${esc(getInitials(name))}</div>
+                    <div class="o-main">
+                        <div class="o-top"><span class="o-name">${esc(name)}</span>${priBadge}${grp}${chips}</div>
+                        <div class="o-prev">${esc(preview)}</div>
                         <div class="reply-area hidden" id="tbox-${esc(id)}"></div>
+                    </div>
+                    <div class="o-right">
+                        <div class="o-time${urgent ? ' stale' : ''}">${esc(waitLabel)}</div>
+                        <div class="o-actions">
+                            <button class="o-btn" onclick="openTagEditor('${escAttr(id)}','${escAttr(it.chat_jid)}','${escAttr(pri)}','${escAttr(it.tags || '')}')">Tag</button>
+                            <button class="o-btn" onclick="muteReplyChat('${escAttr(it.chat_jid)}','${escAttr(name)}')">${muteLabel}</button>
+                        </div>
                     </div>
                 </div>`;
         }
@@ -2543,7 +2623,7 @@
             const q = peopleQuery.trim().toLowerCase();
             const items = peopleView.filter(p => matchesMetaFilter(p, peopleFilter))
                 .filter(p => !q || (p.name || '').toLowerCase().includes(q) || tagList(p.tags).some(t => t.toLowerCase().includes(q)));
-            let html = `<div style="padding:8px 4px 4px;"><input type="text" class="reply-input" placeholder="Search people & tags…" value="${escAttr(peopleQuery)}" oninput="peopleQuery=this.value;renderFilteredPeople();" style="width:100%;box-sizing:border-box;" /></div>` + bar;
+            let html = `<input type="text" class="o-search" placeholder="Search people & tags…" value="${escAttr(peopleQuery)}" oninput="peopleQuery=this.value;renderFilteredPeople();" />` + bar;
             if (!items.length) {
                 container.innerHTML = html + `<div class="empty-state">
                     <div class="empty-state-title">${peopleView.length ? 'Nothing here' : 'No people yet'}</div>
