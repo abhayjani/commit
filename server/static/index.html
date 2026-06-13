@@ -1392,6 +1392,25 @@
         .o-reasons { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 5px; }
         .o-reason { font-size: 10.5px; font-weight: 500; color: var(--accent); background: var(--accent-light); border-radius: 5px; padding: 1.5px 8px; }
 
+        /* ── Thread-view slide-over ── */
+        .th-overlay { position: fixed; inset: 0; background: rgba(20,20,40,0.32); z-index: 1000; opacity: 0; pointer-events: none; transition: opacity .15s; }
+        .th-overlay.on { opacity: 1; pointer-events: auto; }
+        .th-panel { position: fixed; top: 0; right: 0; bottom: 0; width: 440px; max-width: 92vw; background: var(--canvas); border-left: 1px solid var(--line); z-index: 1001; transform: translateX(101%); transition: transform .2s ease; display: flex; flex-direction: column; box-shadow: -8px 0 30px rgba(20,20,40,0.10); }
+        .th-panel.on { transform: translateX(0); }
+        .th-head { display: flex; align-items: center; gap: 12px; padding: 15px 18px; border-bottom: 1px solid var(--line); background: var(--surface); }
+        .th-head .o-av { flex: 0 0 38px; height: 38px; font-size: 14px; }
+        .th-name { font-size: 15px; font-weight: 600; color: var(--ink); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .th-close { background: none; border: none; color: var(--ink-tertiary); font-size: 22px; cursor: pointer; line-height: 1; padding: 0 4px; }
+        .th-body { flex: 1; overflow-y: auto; padding: 16px 16px 10px; display: flex; flex-direction: column; gap: 3px; }
+        .th-day { align-self: center; font-size: 10.5px; color: var(--ink-tertiary); background: var(--surface-sunken); padding: 2px 10px; border-radius: 10px; margin: 12px 0 6px; }
+        .th-b { max-width: 80%; padding: 7px 11px; border-radius: 13px; font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; }
+        .th-b.me { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 4px; }
+        .th-b.them { align-self: flex-start; background: var(--surface); border: 1px solid var(--line); color: var(--ink); border-bottom-left-radius: 4px; }
+        .th-sender { font-size: 11px; font-weight: 600; color: var(--accent); margin-bottom: 2px; }
+        .th-time { font-size: 9.5px; color: var(--ink-faint); margin-top: 3px; }
+        .th-b.me .th-time { color: rgba(255,255,255,0.72); text-align: right; }
+        .th-foot { padding: 10px 16px; border-top: 1px solid var(--line); background: var(--surface); font-size: 11px; color: var(--ink-tertiary); text-align: center; }
+
         @media (max-width: 720px) {
             .o-actions { opacity: 1; }
             .o-name { max-width: 44%; }
@@ -1968,6 +1987,18 @@
         </div>
 
         <div class="footer">Orbit · your second WhatsApp</div>
+    </div>
+
+    <!-- ══════ Thread-view panel ══════ -->
+    <div class="th-overlay" id="th-overlay" onclick="closeThread()"></div>
+    <div class="th-panel" id="th-panel">
+        <div class="th-head">
+            <div class="o-av" id="th-av"></div>
+            <div class="th-name" id="th-name"></div>
+            <button class="th-close" onclick="closeThread()" aria-label="Close">&times;</button>
+        </div>
+        <div class="th-body" id="th-body"></div>
+        <div class="th-foot">🔒 Read-only · open WhatsApp to reply</div>
     </div>
 
     <!-- ══════ Settings Overlay ══════ -->
@@ -2564,19 +2595,19 @@
             const rs = (it.reasons || []).filter(r => r !== 'P0' && r !== 'P1' && r !== 'P2');
             const reasonsHtml = rs.length ? `<div class="o-reasons">${rs.map(r => `<span class="o-reason">${esc(r)}</span>`).join('')}</div>` : '';
             return `
-                <div class="${rowCls}">
+                <div class="${rowCls}" style="cursor:pointer;" onclick="openThread('${escAttr(it.chat_jid)}','${escAttr(name)}')">
                     <div class="o-av" style="background:${avatarColor(name)[0]};color:${avatarColor(name)[1]};">${esc(getInitials(name))}</div>
                     <div class="o-main">
                         <div class="o-top"><span class="o-name">${esc(name)}</span>${priBadge}${grp}${chips}</div>
                         <div class="o-prev">${prevHtml}</div>
                         ${reasonsHtml}
-                        <div class="reply-area hidden" id="tbox-${esc(id)}"></div>
+                        <div class="reply-area hidden" id="tbox-${esc(id)}" onclick="event.stopPropagation()"></div>
                     </div>
                     <div class="o-right">
                         <div class="o-time${urgent ? ' stale' : ''}">${esc(waitLabel)}</div>
                         <div class="o-actions">
-                            <button class="o-btn" onclick="openTagEditor('${escAttr(id)}','${escAttr(it.chat_jid)}','${escAttr(pri)}','${escAttr(it.tags || '')}')">Tag</button>
-                            <button class="o-btn" onclick="muteReplyChat('${escAttr(it.chat_jid)}','${escAttr(name)}')">${muteLabel}</button>
+                            <button class="o-btn" onclick="event.stopPropagation();openTagEditor('${escAttr(id)}','${escAttr(it.chat_jid)}','${escAttr(pri)}','${escAttr(it.tags || '')}')">Tag</button>
+                            <button class="o-btn" onclick="event.stopPropagation();muteReplyChat('${escAttr(it.chat_jid)}','${escAttr(name)}')">${muteLabel}</button>
                         </div>
                     </div>
                 </div>`;
@@ -2679,6 +2710,44 @@
                 loadDashboard();
             } catch (e) { console.error('forget error:', e); }
         }
+        // ── Thread-view: click a row → WhatsApp-style read-only history ──
+        async function openThread(chatJID, name) {
+            const panel = document.getElementById('th-panel'), ov = document.getElementById('th-overlay');
+            const ac = avatarColor(name || '?');
+            const av = document.getElementById('th-av');
+            av.textContent = getInitials(name || '?'); av.style.background = ac[0]; av.style.color = ac[1];
+            document.getElementById('th-name').textContent = name || 'Chat';
+            const body = document.getElementById('th-body');
+            body.innerHTML = '<div style="text-align:center;color:var(--ink-tertiary);font-size:12px;padding:40px 0;">Loading…</div>';
+            ov.classList.add('on'); panel.classList.add('on');
+            try {
+                const d = await api('/api/thread?chat_jid=' + encodeURIComponent(chatJID));
+                const msgs = d.messages || [];
+                if (!msgs.length) {
+                    body.innerHTML = '<div style="text-align:center;color:var(--ink-tertiary);font-size:12px;padding:40px 0;">No history synced for this chat yet.</div>';
+                    return;
+                }
+                let html = '', lastDay = '';
+                for (const m of msgs) {
+                    const dt = new Date(m.ts * 1000);
+                    const day = dt.toLocaleDateString([], {weekday: 'short', month: 'short', day: 'numeric'});
+                    if (day !== lastDay) { html += `<div class="th-day">${esc(day)}</div>`; lastDay = day; }
+                    const t = dt.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+                    const sender = (!m.from_me && d.is_group && m.sender) ? `<div class="th-sender">${esc(m.sender)}</div>` : '';
+                    html += `<div class="th-b ${m.from_me ? 'me' : 'them'}">${sender}${esc(m.text)}<div class="th-time">${t}</div></div>`;
+                }
+                body.innerHTML = html;
+                body.scrollTop = body.scrollHeight;
+            } catch (e) {
+                body.innerHTML = `<div style="text-align:center;color:var(--danger);font-size:12px;padding:40px 0;">${esc((e && e.message) || 'Failed to load')}</div>`;
+            }
+        }
+        function closeThread() {
+            document.getElementById('th-panel').classList.remove('on');
+            document.getElementById('th-overlay').classList.remove('on');
+        }
+        document.addEventListener('keydown', e => { if (e.key === 'Escape') closeThread(); });
+
         async function muteReplyChat(chatJID, name) {
             try {
                 await api('/api/chats/mute', {

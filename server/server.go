@@ -135,6 +135,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/replies", s.requireAuth(s.handleReplies))
 	s.mux.HandleFunc("/api/people", s.requireAuth(s.handlePeople))
 	s.mux.HandleFunc("/api/archived", s.requireAuth(s.handleArchived))
+	s.mux.HandleFunc("/api/thread", s.requireAuth(s.handleThread))
 	s.mux.HandleFunc("/api/chats/meta", s.requireAuth(s.handleChatMeta))
 	s.mux.HandleFunc("/api/chats/forget", s.requireAuth(s.handleForget))
 	s.mux.HandleFunc("/api/extraction", s.requireAuth(s.handleExtraction))
@@ -959,6 +960,39 @@ func (s *Server) handlePeople(w http.ResponseWriter, r *http.Request) {
 		people = []*store.Person{}
 	}
 	writeJSON(w, people)
+}
+
+// handleThread returns a chat's recent conversation (oldest-first) for the
+// read-only history panel.
+func (s *Server) handleThread(w http.ResponseWriter, r *http.Request) {
+	jid := r.URL.Query().Get("chat_jid")
+	if jid == "" {
+		http.Error(w, "chat_jid required", 400)
+		return
+	}
+	msgs, err := s.db.GetRecentThread(jid, 300)
+	if err != nil {
+		http.Error(w, "failed to get thread", 500)
+		return
+	}
+	type msg struct {
+		FromMe bool   `json:"from_me"`
+		Sender string `json:"sender"`
+		Text   string `json:"text"`
+		Ts     int64  `json:"ts"`
+	}
+	out := []msg{}
+	name, isGroup := "", false
+	for _, m := range msgs {
+		out = append(out, msg{m.IsFromMe, m.SenderName, m.Content, m.Timestamp.Unix()})
+		if m.IsGroup {
+			isGroup = true
+		}
+		if !m.IsFromMe && m.ChatName != "" {
+			name = m.ChatName
+		}
+	}
+	writeJSON(w, map[string]any{"name": name, "is_group": isGroup, "messages": out})
 }
 
 // handleArchived returns the chats you archived in WhatsApp (Archive tab).
