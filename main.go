@@ -28,9 +28,9 @@ func main() {
 	waStore.SetOSInfo("Commit", [3]uint32{1, 1, 1})
 
 	log.Println("══════════════════════════════════════════════")
-	log.Println("  Commit (Outscroll fork) — READ-ONLY MODE")
-	log.Println("  Reads & drafts only. NEVER sends a WhatsApp")
-	log.Println("  message. Safe to link your number.")
+	log.Println("  Orbit — your second WhatsApp (READ-ONLY)")
+	log.Println("  Reads only. NEVER sends a WhatsApp message.")
+	log.Println("  Safe to link your number.")
 	log.Println("══════════════════════════════════════════════")
 
 	dataDir, err := dataDirectory()

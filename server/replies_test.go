@@ -186,23 +186,23 @@ func TestDashboardServesNewUI(t *testing.T) {
 		t.Fatalf("GET / = %d, want 200", rec.Code)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"switchTab('needs_reply'", "Needs reply", "draftReply(", "Read-only"} {
+	for _, want := range []string{"switchTab('needs_reply'", "You need to reply", "openTagEditor(", "Read-only", "Orbit"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("dashboard HTML missing %q", want)
 		}
 	}
 }
 
-// The draft endpoint exists and is gated on having an API key (no network here).
-func TestDraftNeedsKey(t *testing.T) {
+// Forget wipes a chat's data.
+func TestForgetChat(t *testing.T) {
 	s, token := newTestServer(t)
-	req := httptest.NewRequest("POST", "/api/reply/draft",
+	req := httptest.NewRequest("POST", "/api/chats/forget",
 		strings.NewReader(`{"chat_jid":"x@s.whatsapp.net"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(&http.Cookie{Name: "commit_session", Value: token})
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, req)
-	if rec.Code != 400 {
-		t.Errorf("draft without API key = %d, want 400", rec.Code)
+	if rec.Code != 200 {
+		t.Errorf("forget = %d, want 200", rec.Code)
 	}
 }

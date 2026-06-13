@@ -70,7 +70,7 @@ func (db *DB) GetReplyQueues() (*ReplyQueues, error) {
 		LEFT JOIN chat_meta cm ON cm.chat_jid = m.chat_jid
 		WHERE m.rn = 1
 		  AND m.chat_jid NOT IN (SELECT chat_jid FROM muted_chats)
-		ORDER BY m.timestamp ASC`, staleCutoff)
+		ORDER BY m.timestamp DESC`, staleCutoff)
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +95,7 @@ func (db *DB) GetReplyQueues() (*ReplyQueues, error) {
 			person = senderName
 		}
 		if person == "" {
-			person = "Unknown"
+			person = displayPhone(chatJID)
 		}
 
 		item := &ReplyItem{
@@ -210,6 +210,32 @@ func (db *DB) GetMyVoiceSamples(chatJID string, limit int) ([]string, error) {
 		}
 	}
 	return samples, nil
+}
+
+// displayPhone turns a chat JID into a human-ish label when we have no real
+// name yet — a phone number beats "Unknown" every time.
+func displayPhone(chatJID string) string {
+	if strings.HasSuffix(chatJID, "@g.us") {
+		return "Group chat"
+	}
+	id := chatJID
+	if at := strings.IndexByte(chatJID, '@'); at >= 0 {
+		id = chatJID[:at]
+	}
+	if id == "" {
+		return "Unknown contact"
+	}
+	allDigits := true
+	for _, r := range id {
+		if r < '0' || r > '9' {
+			allDigits = false
+			break
+		}
+	}
+	if allDigits && len(id) >= 7 {
+		return "+" + id
+	}
+	return "Unknown contact"
 }
 
 func snippet(s string, n int) string {

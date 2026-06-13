@@ -87,6 +87,55 @@ func (db *DB) SetExtractionEnabled(on bool) error {
 	return db.SetSetting("extraction_enabled", v)
 }
 
+// DistinctPersonChats lists every 1:1 chat JID (for name resolution).
+func (db *DB) DistinctPersonChats() ([]string, error) {
+	rows, err := db.conn.Query("SELECT DISTINCT chat_jid FROM messages WHERE is_group = 0")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var j string
+		if err := rows.Scan(&j); err != nil {
+			return nil, err
+		}
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
+// UpdateChatName stamps a resolved display name across a chat's messages.
+func (db *DB) UpdateChatName(chatJID, name string) error {
+	if name == "" {
+		return nil
+	}
+	_, err := db.conn.Exec("UPDATE messages SET chat_name = ? WHERE chat_jid = ?", name, chatJID)
+	return err
+}
+
+// DeleteChat is the "forget this contact" action — wipes everything we hold
+// about one chat. Right-to-delete for the SOC2-spirit local store.
+func (db *DB) DeleteChat(chatJID string) error {
+	tx, err := db.conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, stmt := range []string{
+		"DELETE FROM messages WHERE chat_jid = ?",
+		"DELETE FROM commitments WHERE chat_jid = ?",
+		"DELETE FROM chat_meta WHERE chat_jid = ?",
+		"DELETE FROM favorite_chats WHERE chat_jid = ?",
+		"DELETE FROM muted_chats WHERE chat_jid = ?",
+	} {
+		if _, err := tx.Exec(stmt, chatJID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // CountChats is the number of distinct chats we've seen — the People count.
 func (db *DB) CountChats() int {
 	var n int
@@ -151,7 +200,7 @@ func (db *DB) GetPeople() ([]*Person, error) {
 			if !p.LastFromMe && senderName != "" {
 				p.Name = senderName
 			} else {
-				p.Name = p.ChatJID
+				p.Name = displayPhone(p.ChatJID)
 			}
 		}
 		p.LastText = snippet(p.LastText, 120)

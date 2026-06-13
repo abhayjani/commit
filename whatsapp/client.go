@@ -387,8 +387,64 @@ func (c *Client) startLoops(ctx context.Context) {
 	readOnly := c.readOnly
 	c.mu.Unlock()
 	go c.extractor.StartProcessingLoop(ctx) // read + analyze only, no sends
+	go c.nameResolverLoop(ctx)              // fill real contact names (kills "Unknown")
 	if !readOnly {
 		go c.reminderLoop(ctx) // reminderLoop delivers via WhatsApp; pointless (and blocked) in read-only
+	}
+}
+
+// resolveContactName looks up a 1:1 contact's display name from WhatsApp's
+// synced contact store (your address-book name, their push name, etc.).
+func (c *Client) resolveContactName(jid types.JID) string {
+	c.mu.RLock()
+	client := c.wa
+	c.mu.RUnlock()
+	if client == nil || client.Store == nil || client.Store.Contacts == nil {
+		return ""
+	}
+	info, err := client.Store.Contacts.GetContact(context.Background(), jid)
+	if err != nil || !info.Found {
+		return ""
+	}
+	switch {
+	case info.FullName != "":
+		return info.FullName
+	case info.FirstName != "":
+		return info.FirstName
+	case info.BusinessName != "":
+		return info.BusinessName
+	case info.PushName != "":
+		return info.PushName
+	}
+	return ""
+}
+
+// nameResolverLoop periodically stamps real contact names onto stored chats.
+// Runs a bit after connect (so contact sync has landed) and every 10 min after.
+func (c *Client) nameResolverLoop(ctx context.Context) {
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(15 * time.Second):
+	}
+	for {
+		jids, err := c.db.DistinctPersonChats()
+		if err == nil {
+			for _, j := range jids {
+				jid, err := types.ParseJID(j)
+				if err != nil {
+					continue
+				}
+				if name := c.resolveContactName(jid); name != "" {
+					c.db.UpdateChatName(j, name)
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(10 * time.Minute):
+		}
 	}
 }
 

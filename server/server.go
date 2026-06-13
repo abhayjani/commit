@@ -132,9 +132,9 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/followups", s.requireAuth(s.handleFollowUps))
 	s.mux.HandleFunc("/api/followups/nudge", s.requireAuth(s.handleNudge))
 	s.mux.HandleFunc("/api/replies", s.requireAuth(s.handleReplies))
-	s.mux.HandleFunc("/api/reply/draft", s.requireAuth(s.handleDraftReply))
 	s.mux.HandleFunc("/api/people", s.requireAuth(s.handlePeople))
 	s.mux.HandleFunc("/api/chats/meta", s.requireAuth(s.handleChatMeta))
+	s.mux.HandleFunc("/api/chats/forget", s.requireAuth(s.handleForget))
 	s.mux.HandleFunc("/api/extraction", s.requireAuth(s.handleExtraction))
 	s.mux.HandleFunc("/api/export", s.requireAuth(s.handleExport))
 	s.mux.HandleFunc("/api/commitments/auto-resolved", s.requireAuth(s.handleAutoResolved))
@@ -906,9 +906,8 @@ func (s *Server) handleReplies(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, queues)
 }
 
-// handleDraftReply generates a reply in the user's own voice for a chat. It
-// ONLY returns draft text — it never sends anything to WhatsApp (read-only safe).
-func (s *Server) handleDraftReply(w http.ResponseWriter, r *http.Request) {
+// handleForget wipes everything stored about one chat (right-to-delete).
+func (s *Server) handleForget(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		http.Error(w, "method not allowed", 405)
 		return
@@ -920,36 +919,11 @@ func (s *Server) handleDraftReply(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "chat_jid required", 400)
 		return
 	}
-	apiKey := s.db.GetAPIKey()
-	if apiKey == "" {
-		http.Error(w, "no API key — add a Claude key in settings to draft replies", 400)
+	if err := s.db.DeleteChat(body.ChatJID); err != nil {
+		http.Error(w, "failed to forget chat", 500)
 		return
 	}
-	thread, err := s.db.GetRecentThread(body.ChatJID, 15)
-	if err != nil || len(thread) == 0 {
-		http.Error(w, "no messages found for this chat", 404)
-		return
-	}
-	samples, _ := s.db.GetMyVoiceSamples(body.ChatJID, 20)
-
-	personName := ""
-	for i := len(thread) - 1; i >= 0; i-- {
-		if !thread[i].IsFromMe {
-			personName = thread[i].SenderName
-			if personName == "" {
-				personName = thread[i].ChatName
-			}
-			break
-		}
-	}
-
-	draft, err := s.callDraftWithFallback(r.Context(), apiKey, personName, thread, samples)
-	if err != nil {
-		log.Printf("draft error: %v", err)
-		http.Error(w, "failed to draft reply", 500)
-		return
-	}
-	writeJSON(w, map[string]any{"draft": draft})
+	writeJSON(w, map[string]any{"ok": true})
 }
 
 // handlePeople returns the contact-centric directory: every chat as a person
